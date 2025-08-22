@@ -623,6 +623,114 @@
         }
         
         // Draw a gorilla
+        // Get the pixel boundaries of a gorilla for collision detection
+        function getGorillaBounds(x, y, isLeft) {
+            // Apply same safety checks as drawing
+            const minX = isLeft ? 14 : 16;
+            const maxX = isLeft ? CANVAS_WIDTH - 16 : CANVAS_WIDTH - 14;
+            const safeX = Math.max(minX, Math.min(maxX, x));
+            
+            // Victory dance animation affects position
+            const isWinner = gameOver && ((isLeft && winner === 'left') || (!isLeft && winner === 'right'));
+            let gorillaY = y;
+            if (isWinner) {
+                const bodyBounce = Math.sin(victoryDanceTime * 0.8) * 3;
+                gorillaY += bodyBounce;
+            }
+            
+            const gorillaWidth = 16;
+            const gorillaHeight = 20;
+            const gorillaX = safeX - gorillaWidth / 2;
+            
+            return {
+                // Body rectangle
+                body: { x: gorillaX, y: gorillaY, width: gorillaWidth, height: gorillaHeight },
+                // Head circle
+                head: { x: safeX, y: gorillaY - 4, radius: 8 },
+                // Arms (approximate positions based on drawing code)
+                leftArm: isLeft ? 
+                    { x: gorillaX - 6, y: gorillaY + 8, width: 6, height: 4 } : // Left gorilla's left arm down
+                    { x: gorillaX - 8, y: gorillaY + 4, width: 8, height: 4 },   // Right gorilla's left arm raised
+                rightArm: isLeft ?
+                    { x: gorillaX + gorillaWidth, y: gorillaY + 4, width: 8, height: 4 } : // Left gorilla's right arm raised  
+                    { x: gorillaX + gorillaWidth, y: gorillaY + 8, width: 6, height: 4 }    // Right gorilla's right arm down
+            };
+        }
+        
+        // Check if a point is inside any part of a gorilla
+        function isPointInGorilla(pointX, pointY, gorillaX, gorillaY, isLeft) {
+            const bounds = getGorillaBounds(gorillaX, gorillaY, isLeft);
+            
+            // Check body rectangle
+            if (pointX >= bounds.body.x && pointX <= bounds.body.x + bounds.body.width &&
+                pointY >= bounds.body.y && pointY <= bounds.body.y + bounds.body.height) {
+                return true;
+            }
+            
+            // Check head circle
+            const headDistance = Math.sqrt((pointX - bounds.head.x) ** 2 + (pointY - bounds.head.y) ** 2);
+            if (headDistance <= bounds.head.radius) {
+                return true;
+            }
+            
+            // Check left arm rectangle
+            if (pointX >= bounds.leftArm.x && pointX <= bounds.leftArm.x + bounds.leftArm.width &&
+                pointY >= bounds.leftArm.y && pointY <= bounds.leftArm.y + bounds.leftArm.height) {
+                return true;
+            }
+            
+            // Check right arm rectangle
+            if (pointX >= bounds.rightArm.x && pointX <= bounds.rightArm.x + bounds.rightArm.width &&
+                pointY >= bounds.rightArm.y && pointY <= bounds.rightArm.y + bounds.rightArm.height) {
+                return true;
+            }
+            
+            return false;
+        }
+        
+        // Check if an explosion circle overlaps with any part of a gorilla
+        function explosionHitsGorilla(explosionX, explosionY, explosionRadius, gorillaX, gorillaY, isLeft) {
+            const bounds = getGorillaBounds(gorillaX, gorillaY, isLeft);
+            
+            // Check if explosion circle intersects with body rectangle
+            if (circleIntersectsRect(explosionX, explosionY, explosionRadius, bounds.body)) {
+                return true;
+            }
+            
+            // Check if explosion circle intersects with head circle
+            const headDistance = Math.sqrt((explosionX - bounds.head.x) ** 2 + (explosionY - bounds.head.y) ** 2);
+            if (headDistance <= explosionRadius + bounds.head.radius) {
+                return true;
+            }
+            
+            // Check if explosion circle intersects with left arm rectangle
+            if (circleIntersectsRect(explosionX, explosionY, explosionRadius, bounds.leftArm)) {
+                return true;
+            }
+            
+            // Check if explosion circle intersects with right arm rectangle
+            if (circleIntersectsRect(explosionX, explosionY, explosionRadius, bounds.rightArm)) {
+                return true;
+            }
+            
+            return false;
+        }
+        
+        // Helper function to check if a circle intersects with a rectangle
+        function circleIntersectsRect(circleX, circleY, circleRadius, rect) {
+            // Find the closest point on the rectangle to the circle center
+            const closestX = Math.max(rect.x, Math.min(circleX, rect.x + rect.width));
+            const closestY = Math.max(rect.y, Math.min(circleY, rect.y + rect.height));
+            
+            // Calculate distance from circle center to closest point
+            const distanceX = circleX - closestX;
+            const distanceY = circleY - closestY;
+            const distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+            
+            // Check if distance is less than circle radius
+            return distanceSquared <= (circleRadius * circleRadius);
+        }
+        
         function drawGorilla(x, y, isLeft = true) {
             // Final safety check - never draw outside canvas bounds
             const minX = isLeft ? 14 : 16; // Account for arm extensions
@@ -772,18 +880,18 @@
             const minSafeDistance = 25; // Projectile must travel 25px before it can hit gorillas
             
             if (projectile.distanceTraveled > minSafeDistance) {
-                // Check for direct gorilla hits (but not the gorilla who launched it)
+                // Check for direct gorilla hits (but not the gorilla who launched it) - pixel perfect collision
                 if (leftGorilla && projectile.launchedBy !== 'left') {
-                    const leftDistance = Math.sqrt((projectile.x - leftGorilla.x) ** 2 + (projectile.y - leftGorilla.y) ** 2);
-                    if (leftDistance <= 10) { // 10px radius around gorilla center
+                    if (isPointInGorilla(projectile.x, projectile.y, leftGorilla.x, leftGorilla.y, true)) {
+                        console.log('Direct banana hit on left gorilla!');
                         explode(projectile.x, projectile.y);
                         return;
                     }
                 }
                 
                 if (rightGorilla && projectile.launchedBy !== 'right') {
-                    const rightDistance = Math.sqrt((projectile.x - rightGorilla.x) ** 2 + (projectile.y - rightGorilla.y) ** 2);
-                    if (rightDistance <= 10) { // 10px radius around gorilla center
+                    if (isPointInGorilla(projectile.x, projectile.y, rightGorilla.x, rightGorilla.y, false)) {
+                        console.log('Direct banana hit on right gorilla!');
                         explode(projectile.x, projectile.y);
                         return;
                     }
@@ -822,20 +930,20 @@
             let hitGorilla = null;
             let isGorillaHit = false;
             
-            // Check if either gorilla is in blast radius AND not already in an explosion hole
+            // Check if explosion overlaps with any gorilla pixels
             if (leftGorilla) {
-                const leftDistance = Math.sqrt((x - leftGorilla.x) ** 2 + (y - leftGorilla.y) ** 2);
-                if (leftDistance <= blastRadius && !isPointInExplosionHole(leftGorilla.x, leftGorilla.y)) {
+                if (explosionHitsGorilla(x, y, blastRadius, leftGorilla.x, leftGorilla.y, true)) {
                     hitGorilla = 'left';
                     isGorillaHit = true;
+                    console.log('Explosion hit left gorilla!');
                 }
             }
             
             if (rightGorilla && !isGorillaHit) {
-                const rightDistance = Math.sqrt((x - rightGorilla.x) ** 2 + (y - rightGorilla.y) ** 2);
-                if (rightDistance <= blastRadius && !isPointInExplosionHole(rightGorilla.x, rightGorilla.y)) {
+                if (explosionHitsGorilla(x, y, blastRadius, rightGorilla.x, rightGorilla.y, false)) {
                     hitGorilla = 'right';
                     isGorillaHit = true;
+                    console.log('Explosion hit right gorilla!');
                 }
             }
             
