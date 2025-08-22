@@ -213,6 +213,9 @@
         let leftScore = 0;
         let rightScore = 0;
         
+        // Explosion animation
+        let activeExplosion = null;
+        
         // Generate a random vibrant sunset color
         function getRandomSunsetColor() {
             const sunsetColors = [
@@ -810,35 +813,123 @@
         }
         
         function explode(x, y) {
+            console.log('Explode called at', x, y);
             const blastRadius = 40;
             
             // Don't process explosion if game is already over
             if (gameOver) return;
             
+            let hitGorilla = null;
+            let isGorillaHit = false;
+            
             // Check if either gorilla is in blast radius AND not already in an explosion hole
             if (leftGorilla) {
                 const leftDistance = Math.sqrt((x - leftGorilla.x) ** 2 + (y - leftGorilla.y) ** 2);
                 if (leftDistance <= blastRadius && !isPointInExplosionHole(leftGorilla.x, leftGorilla.y)) {
-                    endGame('right'); // Right gorilla wins
-                    return;
+                    hitGorilla = 'left';
+                    isGorillaHit = true;
                 }
             }
             
-            if (rightGorilla) {
+            if (rightGorilla && !isGorillaHit) {
                 const rightDistance = Math.sqrt((x - rightGorilla.x) ** 2 + (y - rightGorilla.y) ** 2);
                 if (rightDistance <= blastRadius && !isPointInExplosionHole(rightGorilla.x, rightGorilla.y)) {
-                    endGame('left'); // Left gorilla wins
-                    return;
+                    hitGorilla = 'right';
+                    isGorillaHit = true;
                 }
             }
             
-            // Create circular hole in buildings/terrain
-            createExplosionHole(x, y, blastRadius);
+            // Start explosion animation
+            if (isGorillaHit) {
+                // Larger explosion for gorilla hits
+                startExplosionAnimation(x, y, 80, true, hitGorilla);
+            } else {
+                // Normal explosion for terrain
+                startExplosionAnimation(x, y, blastRadius, false, null);
+            }
+        }
+        
+        function startExplosionAnimation(x, y, maxRadius, isGorillaHit, hitGorilla) {
+            console.log('Starting explosion animation at', x, y, 'radius:', maxRadius, 'gorilla hit:', isGorillaHit);
+            activeExplosion = {
+                x: x,
+                y: y,
+                maxRadius: maxRadius,
+                currentRadius: maxRadius,
+                shrinkRate: maxRadius / 60, // Animation over ~60 frames (slower to see it)
+                isGorillaHit: isGorillaHit,
+                hitGorilla: hitGorilla,
+                frameCount: 0
+            };
             
-            // Draw explosion effect briefly
-            drawExplosion(x, y, blastRadius);
+            // Immediately create the terrain hole
+            createExplosionHole(x, y, isGorillaHit ? 40 : maxRadius); // Terrain damage is still normal size
             
-            switchTurn();
+            // Clear projectile
+            projectile = null;
+        }
+        
+        function updateExplosionAnimation() {
+            if (!activeExplosion) return;
+            
+            activeExplosion.frameCount++;
+            activeExplosion.currentRadius -= activeExplosion.shrinkRate;
+            
+            // Animation complete when radius reaches zero or below
+            if (activeExplosion.currentRadius <= 0) {
+                const explosion = activeExplosion;
+                activeExplosion = null;
+                
+                // Handle game ending if gorilla was hit
+                if (explosion.isGorillaHit) {
+                    if (explosion.hitGorilla === 'left') {
+                        // Erase the left gorilla
+                        leftGorilla = null;
+                        endGame('right'); // Right gorilla wins
+                    } else {
+                        // Erase the right gorilla
+                        rightGorilla = null;
+                        endGame('left'); // Left gorilla wins
+                    }
+                } else {
+                    // Normal terrain hit - switch turns
+                    switchTurn();
+                }
+            }
+        }
+        
+        function drawExplosionAnimation() {
+            if (!activeExplosion) return;
+            
+            const explosion = activeExplosion;
+            console.log('Drawing explosion at', explosion.x, explosion.y, 'radius:', explosion.currentRadius);
+            
+            // Draw shrinking red fire circle
+            ctx.save();
+            
+            // Outer red fire ring
+            ctx.fillStyle = `rgba(255, 50, 0, ${0.8 * (explosion.currentRadius / explosion.maxRadius)})`;
+            ctx.beginPath();
+            ctx.arc(explosion.x, explosion.y, explosion.currentRadius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Inner orange ring
+            if (explosion.currentRadius > 5) {
+                ctx.fillStyle = `rgba(255, 150, 0, ${0.9 * (explosion.currentRadius / explosion.maxRadius)})`;
+                ctx.beginPath();
+                ctx.arc(explosion.x, explosion.y, explosion.currentRadius * 0.7, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Hot white center
+            if (explosion.currentRadius > 10) {
+                ctx.fillStyle = `rgba(255, 255, 255, ${1.0 * (explosion.currentRadius / explosion.maxRadius)})`;
+                ctx.beginPath();
+                ctx.arc(explosion.x, explosion.y, explosion.currentRadius * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            ctx.restore();
         }
         
         // Store explosion holes to avoid redrawing destroyed areas
@@ -930,35 +1021,12 @@
         
 
         
-        function drawExplosion(x, y, radius) {
-            // Draw explosion effect temporarily
-            ctx.save();
-            
-            // Orange explosion circle
-            ctx.fillStyle = 'rgba(255, 100, 0, 0.8)';
-            ctx.beginPath();
-            ctx.arc(x, y, radius, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Yellow inner circle
-            ctx.fillStyle = 'rgba(255, 200, 0, 0.9)';
-            ctx.beginPath();
-            ctx.arc(x, y, radius * 0.6, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // White hot center
-            ctx.fillStyle = 'rgba(255, 255, 255, 1)';
-            ctx.beginPath();
-            ctx.arc(x, y, radius * 0.3, 0, Math.PI * 2);
-            ctx.fill();
-            
-            ctx.restore();
-            
-            // The explosion effect will be visible for this frame only
-            // The next frame will redraw without it
-        }
+
         
         function switchTurn() {
+            // Don't switch turns if explosion is happening
+            if (activeExplosion) return;
+            
             currentPlayer = currentPlayer === 'left' ? 'right' : 'left';
             projectile = null;
         }
@@ -1081,6 +1149,7 @@
             showVictoryNotification = false;
             projectile = null;
             victoryDanceTime = 0;
+            activeExplosion = null;
         }
         
         function drawBanana(x, y, rotation) {
@@ -1444,6 +1513,9 @@
             // Update projectile if active
             updateProjectile();
             
+            // Update explosion animation
+            updateExplosionAnimation();
+            
             // Update victory dance animation
             if (gameOver && showVictoryNotification) {
                 victoryDanceTime += 0.25; // Much faster increment for frantic movement
@@ -1478,6 +1550,9 @@
             
             // Draw projectile
             drawProjectile();
+            
+            // Draw explosion animation (over everything)
+            drawExplosionAnimation();
             
             // Draw scores
             drawScores();
