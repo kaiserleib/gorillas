@@ -40,56 +40,36 @@
             font-size: 24px;
         }
         
-        .mobile-controls {
-            display: none;
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            gap: 20px;
-            z-index: 1000;
-        }
-        
-        .mobile-button {
-            background: rgba(255, 255, 255, 0.9);
-            border: 3px solid #333;
-            border-radius: 10px;
-            padding: 15px 25px;
-            font-family: "Comic Sans MS", "Marker Felt", fantasy;
-            font-weight: bold;
+        .new-city-button {
+            margin: 20px auto;
+            padding: 12px 24px;
             font-size: 16px;
-            color: #333;
+            font-weight: bold;
+            background: linear-gradient(135deg, #ff6b35, #f7931e);
+            color: white;
+            border: none;
+            border-radius: 25px;
             cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+            font-family: "Comic Sans MS", "Marker Felt", fantasy;
+            display: block;
             user-select: none;
             touch-action: manipulation;
         }
         
-        .mobile-button:active {
-            background: rgba(200, 200, 200, 0.9);
-            transform: scale(0.95);
+        .new-city-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
         }
         
-        .instructions {
-            position: fixed;
-            top: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            text-align: center;
-            font-size: 14px;
-            color: rgba(255, 255, 255, 0.8);
-            z-index: 1000;
-            padding: 0 10px;
+        .new-city-button:active {
+            transform: translateY(0);
+            background: linear-gradient(135deg, #e55a2b, #dc7f19);
         }
         
         /* Mobile-specific styles */
         @media (max-width: 768px) {
-            .mobile-controls {
-                display: flex;
-            }
-            .instructions {
-                font-size: 12px;
-                top: 5px;
-            }
             canvas {
                 max-height: 70vh;
             }
@@ -97,36 +77,32 @@
                 font-size: 20px;
                 margin-bottom: 10px;
             }
+            .new-city-button {
+                padding: 10px 20px;
+                font-size: 14px;
+                margin: 15px auto;
+            }
         }
         
         /* Very small screens */
         @media (max-width: 480px) {
-            .mobile-button {
-                padding: 12px 20px;
-                font-size: 14px;
-            }
-            .instructions {
-                font-size: 11px;
-            }
             h1 {
                 font-size: 18px;
+            }
+            .new-city-button {
+                padding: 8px 16px;
+                font-size: 12px;
+                margin: 10px auto;
             }
         }
     </style>
 </head>
 <body>
-    <div class="instructions">
-        Tap to aim and fire! Right-tap to regenerate city.
-    </div>
-    
-    <div class="game-container">
-        <h1>Gorillas</h1>
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
-    </div>
-    
-    <div class="mobile-controls">
-        <button class="mobile-button" id="regenerateBtn">New City</button>
-    </div>
+                <div class="game-container">
+                <h1>Gorillas</h1>
+                <canvas id="gameCanvas" width="800" height="600"></canvas>
+                <button class="new-city-button" id="regenerateBtn">New City</button>
+            </div>
 
     <script>
         // Game setup
@@ -2369,88 +2345,47 @@
             projectile = createProjectile(startX, startY, clickX, clickY);
         });
         
-        // Add right-click handler to regenerate the background (preserve scores)
+        // Prevent context menu on canvas
         canvas.addEventListener('contextmenu', function(event) {
-            event.preventDefault(); // Prevent context menu
-            
-            const savedLeftScore = leftScore;
-            const savedRightScore = rightScore;
-            
-            resetGame();
-            
-            // Restore scores
-            leftScore = savedLeftScore;
-            rightScore = savedRightScore;
+            event.preventDefault(); // Prevent context menu, but don't regenerate
         });
         
         // Touch event handlers for mobile
-        let touchStartTime = 0;
-        let touchTimeout = null;
-        
         canvas.addEventListener('touchstart', function(event) {
             event.preventDefault();
-            touchStartTime = Date.now();
-            
-            // Set timeout for long press (right-click equivalent)
-            touchTimeout = setTimeout(() => {
-                // Long press - regenerate city
-                const savedLeftScore = leftScore;
-                const savedRightScore = rightScore;
-                
-                resetGame();
-                
-                // Restore scores
-                leftScore = savedLeftScore;
-                rightScore = savedRightScore;
-                
-                // Visual feedback
-                canvas.style.filter = 'brightness(0.8)';
-                setTimeout(() => {
-                    canvas.style.filter = 'brightness(1)';
-                }, 100);
-            }, 500); // 500ms long press
         });
         
         canvas.addEventListener('touchend', function(event) {
             event.preventDefault();
-            const touchDuration = Date.now() - touchStartTime;
             
-            // Clear long press timeout
-            if (touchTimeout) {
-                clearTimeout(touchTimeout);
-                touchTimeout = null;
+            // Tap to fire projectile
+            const touch = event.changedTouches[0];
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (touch.clientX - rect.left) * (CANVAS_WIDTH / rect.width);
+            const clickY = (touch.clientY - rect.top) * (CANVAS_HEIGHT / rect.height);
+            
+            // If victory notification is showing, dismiss it and start new round
+            if (showVictoryNotification) {
+                resetGame();
+                return;
             }
             
-            // Short tap - fire projectile
-            if (touchDuration < 500) {
-                const touch = event.changedTouches[0];
-                const rect = canvas.getBoundingClientRect();
-                const clickX = (touch.clientX - rect.left) * (CANVAS_WIDTH / rect.width);
-                const clickY = (touch.clientY - rect.top) * (CANVAS_HEIGHT / rect.height);
-                
-                // If victory notification is showing, dismiss it and start new round
-                if (showVictoryNotification) {
-                    resetGame();
-                    return;
-                }
-                
-                // Don't launch if game over or projectile already active
-                if (!gameActive || projectile || gameOver) return;
-                
-                // Launch projectile from current player's gorilla head
-                let startX, startY;
-                if (currentPlayer === 'left' && leftGorilla) {
-                    startX = leftGorilla.x;
-                    startY = leftGorilla.y - 4; // Head position
-                } else if (currentPlayer === 'right' && rightGorilla) {
-                    startX = rightGorilla.x;
-                    startY = rightGorilla.y - 4; // Head position
-                } else {
-                    return; // No gorilla to launch from
-                }
-                
-                projectile = createProjectile(startX, startY, clickX, clickY);
+            // Don't launch if game over or projectile already active
+            if (!gameActive || projectile || gameOver) return;
+            
+            // Launch projectile from current player's gorilla head
+            let startX, startY;
+            if (currentPlayer === 'left' && leftGorilla) {
+                startX = leftGorilla.x;
+                startY = leftGorilla.y - 4; // Head position
+            } else if (currentPlayer === 'right' && rightGorilla) {
+                startX = rightGorilla.x;
+                startY = rightGorilla.y - 4; // Head position
+            } else {
+                return; // No gorilla to launch from
             }
+            
+            projectile = createProjectile(startX, startY, clickX, clickY);
         });
         
         canvas.addEventListener('touchmove', function(event) {
