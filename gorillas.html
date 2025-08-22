@@ -565,7 +565,8 @@
                 active: true,
                 trail: [], // For visual trail
                 distanceTraveled: 0, // Track how far projectile has moved
-                launchedBy: currentPlayer // Track who launched this projectile
+                launchedBy: currentPlayer, // Track who launched this projectile
+                rotation: 0 // For spinning banana animation
             };
         }
         
@@ -584,6 +585,9 @@
             // Update distance traveled
             const frameDistance = Math.sqrt((projectile.x - prevX) ** 2 + (projectile.y - prevY) ** 2);
             projectile.distanceTraveled += frameDistance;
+            
+            // Update rotation for spinning effect
+            projectile.rotation += 0.3; // Spin speed
             
             // Add to trail
             projectile.trail.push({x: projectile.x, y: projectile.y});
@@ -919,11 +923,44 @@
             projectile = null;
         }
         
+        function drawBanana(x, y, rotation) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rotation);
+            
+            // Draw banana shape
+            const scale = 0.8;
+            
+            // Banana body (curved shape)
+            ctx.fillStyle = '#FFD700'; // Golden yellow
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 8 * scale, 3 * scale, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Banana curve (make it look more banana-like)
+            ctx.fillStyle = '#FFA500'; // Orange yellow for shading
+            ctx.beginPath();
+            ctx.ellipse(-2 * scale, 0, 6 * scale, 2 * scale, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Banana stem (brown tip)
+            ctx.fillStyle = '#8B4513'; // Brown
+            ctx.fillRect(-8 * scale, -1 * scale, 2 * scale, 2 * scale);
+            
+            // Banana highlight
+            ctx.fillStyle = '#FFFF99'; // Light yellow
+            ctx.beginPath();
+            ctx.ellipse(-1 * scale, -0.5 * scale, 3 * scale, 1 * scale, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+        
         function drawProjectile() {
             if (!projectile || !projectile.active) return;
             
             // Draw trail
-            ctx.strokeStyle = 'rgba(255, 255, 0, 0.7)';
+            ctx.strokeStyle = 'rgba(255, 215, 0, 0.7)'; // Golden trail
             ctx.lineWidth = 2;
             ctx.beginPath();
             for (let i = 0; i < projectile.trail.length; i++) {
@@ -936,11 +973,8 @@
             }
             ctx.stroke();
             
-            // Draw projectile
-            ctx.fillStyle = 'yellow';
-            ctx.beginPath();
-            ctx.arc(projectile.x, projectile.y, 3, 0, Math.PI * 2);
-            ctx.fill();
+            // Draw spinning banana
+            drawBanana(projectile.x, projectile.y, projectile.rotation);
         }
         
         // Draw cityscape with infinite scrolling
