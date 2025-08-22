@@ -47,6 +47,35 @@
         const CANVAS_WIDTH = canvas.width;
         const CANVAS_HEIGHT = canvas.height;
         
+        // Camera/viewport system
+        let cameraX = 0; // Current camera position
+        const SCROLL_SPEED = 3; // Pixels per frame when scrolling
+        const WORLD_CHUNK_SIZE = CANVAS_WIDTH; // Make chunk cover full screen width
+        let worldChunks = new Map(); // Store generated building chunks
+        
+        // Input system
+        const keys = {
+            left: false,
+            right: false
+        };
+        
+        // Sky state (cached to prevent flashing)
+        let cachedSunsetColor = null;
+        let cachedStars = [];
+        
+        // Random offset for each session to vary building patterns
+        let sessionRandomOffset = Math.floor(Math.random() * 10000);
+        
+        // Gorilla state
+        let leftGorilla = null;
+        let rightGorilla = null;
+        
+        // Game state
+        let currentPlayer = 'left'; // 'left' or 'right'
+        let gameActive = true;
+        let projectile = null;
+        let flashTimer = 0;
+        
         // Generate a random vibrant sunset color
         function getRandomSunsetColor() {
             const sunsetColors = [
@@ -65,10 +94,14 @@
             return sunsetColors[Math.floor(Math.random() * sunsetColors.length)];
         }
         
-        // Create sunset gradient background
+        // Create sunset gradient background (cached)
         function drawSunsetBackground() {
-            // Get random sunset color
-            const [r, g, b] = getRandomSunsetColor();
+            // Use cached sunset color, or generate one if not cached
+            if (!cachedSunsetColor) {
+                cachedSunsetColor = getRandomSunsetColor();
+            }
+            
+            const [r, g, b] = cachedSunsetColor;
             
             // Create gradient from sunset color to dark blue/black
             const gradient = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
@@ -88,30 +121,1021 @@
             ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
         }
         
-        // Add random stars to the sky
+        // Add random stars to the sky (cached)
         function drawStars() {
-            const numStars = 50 + Math.floor(Math.random() * 50); // 50-100 stars
+            // Generate stars once and cache them
+            if (cachedStars.length === 0) {
+                const numStars = 50 + Math.floor(Math.random() * 50); // 50-100 stars
+                
+                for (let i = 0; i < numStars; i++) {
+                    // Stars appear more in the upper portion of the sky
+                    const x = Math.random() * CANVAS_WIDTH;
+                    const y = Math.random() * (CANVAS_HEIGHT * 0.6); // Top 60% of screen
+                    const isBright = Math.random() < 0.1; // 10% chance of bright star
+                    
+                    cachedStars.push({
+                        x: Math.floor(x),
+                        y: Math.floor(y),
+                        isBright: isBright
+                    });
+                }
+            }
             
+            // Draw cached stars
             ctx.fillStyle = 'white';
             
-            for (let i = 0; i < numStars; i++) {
-                // Stars appear more in the upper portion of the sky
-                const x = Math.random() * CANVAS_WIDTH;
-                const y = Math.random() * (CANVAS_HEIGHT * 0.6); // Top 60% of screen
-                
+            for (const star of cachedStars) {
                 // Draw a single pixel star
-                ctx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
+                ctx.fillRect(star.x, star.y, 1, 1);
                 
-                // Occasionally add a slightly brighter star (2x2 pixels)
-                if (Math.random() < 0.1) {
-                    ctx.fillRect(Math.floor(x) + 1, Math.floor(y), 1, 1);
-                    ctx.fillRect(Math.floor(x), Math.floor(y) + 1, 1, 1);
+                // Add brighter star effect if needed
+                if (star.isBright) {
+                    ctx.fillRect(star.x + 1, star.y, 1, 1);
+                    ctx.fillRect(star.x, star.y + 1, 1, 1);
                 }
             }
         }
         
-        // Initialize the game
-        function init() {
+        // Generate normal distribution for building heights
+        function normalRandom(mean, stdDev) {
+            // Box-Muller transform for normal distribution
+            let u = 0, v = 0;
+            while(u === 0) u = Math.random(); // Converting [0,1) to (0,1)
+            while(v === 0) v = Math.random();
+            const z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+            return z * stdDev + mean;
+        }
+        
+        // Generate random window color
+        function getRandomWindowColor() {
+            const windowColors = [
+                'rgb(255, 255, 255)',     // White
+                'rgb(255, 255, 200)',     // Warm white
+                'rgb(255, 220, 100)',     // Bright yellow
+                'rgb(255, 180, 80)',      // Bright orange
+                'rgb(255, 200, 150)',     // Soft orange
+                'rgb(200, 200, 255)',     // Cool white
+            ];
+            return windowColors[Math.floor(Math.random() * windowColors.length)];
+        }
+        
+        // Generate a world chunk of buildings with seeded randomness
+        function generateWorldChunk(chunkIndex) {
+            // Use chunk index as seed for consistent generation
+            const seedrandom = function(seed) {
+                const x = Math.sin(seed) * 10000;
+                return x - Math.floor(x);
+            };
+            
+            const chunk = {
+                backgroundBuildings: [],
+                medianBuildings: [],
+                foregroundBuildings: []
+            };
+            
+            // Generate background buildings for this chunk
+            let currentX = 0;
+            let buildingSeed = chunkIndex * 1000 + sessionRandomOffset; // Unique seed per chunk + session variation
+            
+            while (currentX < WORLD_CHUNK_SIZE) {
+                buildingSeed++;
+                
+                // Very chaotic background building placement
+                const chaosFactor = seedrandom(buildingSeed * 17 + 111);
+                const buildingChance = 0.2 + chaosFactor * 0.4; // 20-60% chance
+                
+                if (seedrandom(buildingSeed) < buildingChance) {
+                    // Ultra varied widths with chaos
+                    const widthBase = 8 + seedrandom(buildingSeed + 50) * 60; // 8-68px
+                    const widthChaos1 = (seedrandom(buildingSeed * 23 + 150) - 0.5) * 30; // ±15px
+                    const widthChaos2 = seedrandom(buildingSeed + 250) * 20; // 0-20px extra
+                    const width = widthBase + widthChaos1 + widthChaos2;
+                    
+                    const meanHeight = CANVAS_HEIGHT * 0.4;
+                    const stdDev = CANVAS_HEIGHT * 0.12;
+                    let height = normalRandom(meanHeight, stdDev);
+                    height = Math.max(CANVAS_HEIGHT * 0.15, Math.min(CANVAS_HEIGHT * 0.7, height));
+                    
+                    const hasFeatures = seedrandom(buildingSeed + 350) < 0.3;
+                    
+                    chunk.backgroundBuildings.push({
+                        x: currentX,
+                        width: Math.max(8, width),
+                        height: height,
+                        hasFeatures: hasFeatures,
+                        seed: buildingSeed
+                    });
+                }
+                
+                // Very chaotic spacing
+                const spacingBase = 5 + seedrandom(buildingSeed + 450) * 45; // 5-50px
+                const spacingChaos = seedrandom(buildingSeed * 19 + 550) * 25; // 0-25px extra
+                const bigGap = seedrandom(buildingSeed + 650) < 0.12 ? 15 + seedrandom(buildingSeed + 750) * 40 : 0;
+                currentX += spacingBase + spacingChaos + bigGap;
+            }
+            
+            // Generate median layer buildings
+            currentX = 0;
+            buildingSeed = chunkIndex * 2000 + sessionRandomOffset; // Different seed range for median + session variation
+            
+            while (currentX < WORLD_CHUNK_SIZE) {
+                buildingSeed++;
+                
+                // Chaotic building placement
+                const positionFactor = currentX / WORLD_CHUNK_SIZE;
+                const chaosFactor = seedrandom(buildingSeed * 11 + 333);
+                const buildingChance = 0.3 + chaosFactor * 0.5; // 30-80% chance
+                
+                if (seedrandom(buildingSeed) < buildingChance) {
+                    // Chaotic widths with multiple factors
+                    const widthBase = 15 + seedrandom(buildingSeed + 100) * 70; // 15-85px
+                    const widthChaos = (seedrandom(buildingSeed * 7 + 200) - 0.5) * 40; // ±20px
+                    const width = widthBase + widthChaos;
+                    
+                    const meanHeight = CANVAS_HEIGHT * 0.45;
+                    const stdDev = CANVAS_HEIGHT * 0.13;
+                    let height = normalRandom(meanHeight, stdDev);
+                    height = Math.max(CANVAS_HEIGHT * 0.12, Math.min(CANVAS_HEIGHT * 0.75, height));
+                    
+                    const hasFeatures = seedrandom(buildingSeed + 300) < 0.35;
+                    
+                    chunk.medianBuildings.push({
+                        x: currentX,
+                        width: Math.max(12, width),
+                        height: height,
+                        hasFeatures: hasFeatures,
+                        seed: buildingSeed
+                    });
+                }
+                
+                // Chaotic spacing
+                const spacingBase = 8 + seedrandom(buildingSeed + 400) * 50; // 8-58px
+                const spacingChaos = seedrandom(buildingSeed * 13 + 500) * 30; // 0-30px extra
+                const gapBonus = seedrandom(buildingSeed + 600) < 0.15 ? 20 + seedrandom(buildingSeed + 700) * 50 : 0;
+                currentX += spacingBase + spacingChaos + gapBonus;
+            }
+            
+            // Generate foreground layer buildings
+            currentX = 0;
+            buildingSeed = chunkIndex * 3000 + sessionRandomOffset; // Different seed range for foreground + session variation
+            
+            while (currentX < WORLD_CHUNK_SIZE) {
+                buildingSeed++;
+                
+                // Much more chaotic gap logic - non-uniform chances
+                const gapRoll = seedrandom(buildingSeed + 100);
+                const positionFactor = currentX / WORLD_CHUNK_SIZE; // 0 to 1 across chunk
+                const chaosFactor = seedrandom(buildingSeed * 7 + 777);
+                
+                // Variable gap chance based on position and chaos
+                let gapChance = 0.1 + chaosFactor * 0.3; // 10-40% base
+                if (positionFactor < 0.2 || positionFactor > 0.8) gapChance *= 1.5; // More gaps at edges
+                
+                if (gapRoll < gapChance) {
+                    // Extremely varied gap widths (10-100px)
+                    const gapBase = 10 + seedrandom(buildingSeed + 200) * 50;
+                    const gapChaos = seedrandom(buildingSeed + 300) * 40;
+                    const gapWidth = gapBase + gapChaos;
+                    currentX += gapWidth;
+                    continue;
+                }
+                
+                // Extremely varied building widths with multiple random factors
+                const widthBase = 20 + seedrandom(buildingSeed + 400) * 80; // 20-100px
+                const widthChaos1 = (seedrandom(buildingSeed + 500) - 0.5) * 50; // ±25px
+                const widthChaos2 = (seedrandom(buildingSeed * 3 + 600) - 0.5) * 30; // ±15px
+                const positionWidth = positionFactor * 20; // Slight position influence
+                const width = widthBase + widthChaos1 + widthChaos2 + positionWidth;
+                
+                const meanHeight = CANVAS_HEIGHT * 0.55;
+                const stdDev = CANVAS_HEIGHT * 0.18;
+                let height = normalRandom(meanHeight, stdDev);
+                height = Math.max(CANVAS_HEIGHT * 0.15, Math.min(CANVAS_HEIGHT * 0.85, height));
+                
+                const hasFeatures = seedrandom(buildingSeed + 700) < 0.5;
+                
+                chunk.foregroundBuildings.push({
+                    x: currentX,
+                    width: Math.max(15, width),
+                    height: height,
+                    hasFeatures: hasFeatures,
+                    seed: buildingSeed
+                });
+                
+                // Chaotic spacing with multiple factors
+                const spacingBase = -20 + seedrandom(buildingSeed + 800) * 40; // -20 to +20
+                const spacingChaos = (seedrandom(buildingSeed * 5 + 900) - 0.5) * 20; // ±10px
+                const spacing = spacingBase + spacingChaos;
+                currentX += width + spacing;
+            }
+            
+            return chunk;
+        }
+        
+        // Find suitable buildings for gorilla placement
+        function findGorillaBuildings() {
+            console.log("=== FINDING GORILLA BUILDINGS ===");
+            // Generate initial chunk if not exists
+            if (!worldChunks.has(0)) {
+                worldChunks.set(0, generateWorldChunk(0));
+            }
+            
+            const chunk = worldChunks.get(0);
+            const leftQuadrant = CANVAS_WIDTH * 0.3; // 0 to 30% of screen
+            const rightQuadrant = CANVAS_WIDTH * 0.7; // 70% to 100% of screen
+            
+            // Find all buildings in each quadrant
+            let leftBuildings = [];
+            let rightBuildings = [];
+            
+            console.log(`Canvas width: ${CANVAS_WIDTH}, Chunk size: ${WORLD_CHUNK_SIZE}`);
+            console.log(`Left boundary: ${leftQuadrant}, Right boundary: ${rightQuadrant}`);
+            console.log(`Total foreground buildings: ${chunk.foregroundBuildings.length}`);
+            
+            for (const building of chunk.foregroundBuildings) {
+                const buildingCenter = building.x + building.width / 2;
+                console.log(`Building center at x: ${buildingCenter}, width: ${building.width}, height: ${building.height}`);
+                
+                if (buildingCenter <= leftQuadrant) {
+                    leftBuildings.push(building);
+                    console.log(`  -> Added to LEFT quadrant`);
+                } else if (buildingCenter >= rightQuadrant) {
+                    rightBuildings.push(building);
+                    console.log(`  -> Added to RIGHT quadrant`);
+                } else {
+                    console.log(`  -> In MIDDLE (not in either quadrant)`);
+                }
+            }
+            
+            console.log(`Initial search: Left buildings: ${leftBuildings.length}, Right buildings: ${rightBuildings.length}`);
+            
+            // If no buildings in quadrant, expand search
+            if (leftBuildings.length === 0) {
+                console.log("Expanding left search to 40%");
+                for (const building of chunk.foregroundBuildings) {
+                    const buildingCenter = building.x + building.width / 2;
+                    if (buildingCenter <= CANVAS_WIDTH * 0.4) {
+                        leftBuildings.push(building);
+                    }
+                }
+            }
+            
+            if (rightBuildings.length === 0) {
+                console.log("Expanding right search to 60%");
+                for (const building of chunk.foregroundBuildings) {
+                    const buildingCenter = building.x + building.width / 2;
+                    if (buildingCenter >= CANVAS_WIDTH * 0.6) {
+                        rightBuildings.push(building);
+                    }
+                }
+            }
+            
+            console.log(`After expansion: Left buildings: ${leftBuildings.length}, Right buildings: ${rightBuildings.length}`);
+            
+            // Find the tallest building in each quadrant and flatten it for gorilla placement
+            if (leftBuildings.length > 0) {
+                // Sort by height (tallest first)
+                leftBuildings.sort((a, b) => b.height - a.height);
+                const leftBuilding = leftBuildings[0];
+                
+                // Flatten the building (remove architectural features)
+                leftBuilding.hasFeatures = false;
+                
+                leftGorilla = {
+                    x: Math.max(14, Math.min(CANVAS_WIDTH - 16, leftBuilding.x + leftBuilding.width / 2)), // 14px for left arm + body, 16px for right arm
+                    y: CANVAS_HEIGHT - leftBuilding.height - 20, // 20px tall gorilla
+                    building: leftBuilding
+                };
+                const originalX = leftBuilding.x + leftBuilding.width / 2;
+                console.log(`Left gorilla: original x=${originalX}, clamped x=${leftGorilla.x}, canvas width=${CANVAS_WIDTH}`);
+            } else {
+                // Fallback: place on any building
+                if (chunk.foregroundBuildings.length > 0) {
+                    const leftBuilding = chunk.foregroundBuildings[0];
+                    leftBuilding.hasFeatures = false;
+                    leftGorilla = {
+                        x: Math.max(14, Math.min(CANVAS_WIDTH - 16, leftBuilding.x + leftBuilding.width / 2)), // 14px for left arm + body, 16px for right arm
+                        y: CANVAS_HEIGHT - leftBuilding.height - 20,
+                        building: leftBuilding
+                    };
+                    console.log(`Left gorilla placed on fallback building at x: ${leftGorilla.x}, y: ${leftGorilla.y}`);
+                }
+            }
+            
+            if (rightBuildings.length > 0) {
+                // Sort by height (tallest first)
+                rightBuildings.sort((a, b) => b.height - a.height);
+                const rightBuilding = rightBuildings[0];
+                
+                // Flatten the building (remove architectural features)
+                rightBuilding.hasFeatures = false;
+                
+                rightGorilla = {
+                    x: Math.max(16, Math.min(CANVAS_WIDTH - 14, rightBuilding.x + rightBuilding.width / 2)), // 16px for left arm, 14px for body + right arm
+                    y: CANVAS_HEIGHT - rightBuilding.height - 20, // 20px tall gorilla
+                    building: rightBuilding
+                };
+                const originalX = rightBuilding.x + rightBuilding.width / 2;
+                console.log(`Right gorilla: original x=${originalX}, clamped x=${rightGorilla.x}, canvas width=${CANVAS_WIDTH}`);
+            } else {
+                // Fallback: place on the rightmost building that's actually in the right half of screen
+                if (chunk.foregroundBuildings.length > 0) {
+                    // Find buildings in the right half of the screen
+                    let rightHalfBuildings = [];
+                    for (const building of chunk.foregroundBuildings) {
+                        const buildingCenter = building.x + building.width / 2;
+                        if (buildingCenter >= CANVAS_WIDTH * 0.5) { // Right half of screen
+                            rightHalfBuildings.push(building);
+                        }
+                    }
+                    
+                    if (rightHalfBuildings.length > 0) {
+                        // Find the rightmost building in the right half
+                        let rightmostBuilding = rightHalfBuildings[0];
+                        for (const building of rightHalfBuildings) {
+                            if (building.x > rightmostBuilding.x) {
+                                rightmostBuilding = building;
+                            }
+                        }
+                        
+                        rightmostBuilding.hasFeatures = false;
+                        rightGorilla = {
+                            x: Math.max(16, Math.min(CANVAS_WIDTH - 14, rightmostBuilding.x + rightmostBuilding.width / 2)), // 16px for left arm, 14px for body + right arm
+                            y: CANVAS_HEIGHT - rightmostBuilding.height - 20,
+                            building: rightmostBuilding
+                        };
+                        console.log(`Right gorilla placed on rightmost building in right half (fallback) at x: ${rightGorilla.x}, y: ${rightGorilla.y}`);
+                    } else {
+                        // Last resort: place on any building and move it to the right side
+                        const anyBuilding = chunk.foregroundBuildings[chunk.foregroundBuildings.length - 1];
+                        anyBuilding.hasFeatures = false;
+                        rightGorilla = {
+                            x: Math.max(16, Math.min(CANVAS_WIDTH - 14, Math.max(anyBuilding.x + anyBuilding.width / 2, CANVAS_WIDTH * 0.8))), // Force to right side but keep in bounds, 16px for left arm, 14px for body + right arm
+                            y: CANVAS_HEIGHT - anyBuilding.height - 20,
+                            building: anyBuilding
+                        };
+                        console.log(`Right gorilla forced to right side (last resort) at x: ${rightGorilla.x}, y: ${rightGorilla.y}`);
+                    }
+                } else {
+                    console.log("ERROR: No foreground buildings found at all!");
+                }
+            }
+        }
+        
+        // Draw a gorilla
+        function drawGorilla(x, y, isLeft = true) {
+            // Final safety check - never draw outside canvas bounds
+            const minX = isLeft ? 14 : 16; // Account for arm extensions
+            const maxX = isLeft ? CANVAS_WIDTH - 16 : CANVAS_WIDTH - 14;
+            const safeX = Math.max(minX, Math.min(maxX, x));
+            
+            if (safeX !== x) {
+                console.log(`WARNING: Gorilla position corrected from x=${x} to x=${safeX} (canvas width=${CANVAS_WIDTH})`);
+            }
+            
+            // Check if this gorilla should flash (current player)
+            const isCurrentPlayer = (isLeft && currentPlayer === 'left') || (!isLeft && currentPlayer === 'right');
+            const shouldFlash = isCurrentPlayer && gameActive && !projectile;
+            const flashVisible = !shouldFlash || Math.floor(Date.now() / 300) % 2 === 0; // Flash every 300ms
+            
+            if (!flashVisible) return; // Skip drawing if flashing off
+            
+            // Debug colors - bright blue for left, bright yellow for right
+            const bodyColor = isLeft ? 'rgb(0, 100, 255)' : 'rgb(255, 255, 0)'; // Blue or Yellow
+            const headColor = isLeft ? 'rgb(50, 150, 255)' : 'rgb(255, 255, 100)'; // Lighter versions
+            
+            const gorillaWidth = 16;
+            const gorillaHeight = 20;
+            const gorillaX = safeX - gorillaWidth / 2; // Use the safety-checked position
+            const gorillaY = y;
+            
+
+            
+            // Body
+            ctx.fillStyle = bodyColor;
+            ctx.fillRect(gorillaX, gorillaY, gorillaWidth, gorillaHeight);
+            
+            // Head
+            ctx.fillStyle = headColor;
+            ctx.beginPath();
+            ctx.arc(safeX, gorillaY - 4, 8, 0, Math.PI * 2); // Use safeX for head position
+            ctx.fill();
+            
+            // Eyes (black dots)
+            ctx.fillStyle = 'black';
+            ctx.fillRect(safeX - 4, gorillaY - 6, 2, 2); // Use safeX for eye positions
+            ctx.fillRect(safeX + 2, gorillaY - 6, 2, 2);
+            
+            // Arms
+            ctx.fillStyle = bodyColor;
+            if (isLeft) {
+                // Left gorilla - right arm raised (for throwing)
+                ctx.fillRect(gorillaX + gorillaWidth, gorillaY + 4, 8, 4); // Right arm raised
+                ctx.fillRect(gorillaX - 6, gorillaY + 8, 6, 4); // Left arm down
+            } else {
+                // Right gorilla - left arm raised (for throwing)
+                ctx.fillRect(gorillaX - 8, gorillaY + 4, 8, 4); // Left arm raised
+                ctx.fillRect(gorillaX + gorillaWidth, gorillaY + 8, 6, 4); // Right arm down
+            }
+        }
+        
+        // Projectile system
+        function createProjectile(startX, startY, targetX, targetY) {
+            const deltaX = targetX - startX;
+            const deltaY = targetY - startY;
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            
+            // Scale velocity based on distance (further = more force)
+            const maxVelocity = 50;
+            const velocityScale = Math.min(distance / 50, maxVelocity); // Much more powerful shots
+            
+            return {
+                x: startX,
+                y: startY,
+                vx: (deltaX / distance) * velocityScale,
+                vy: (deltaY / distance) * velocityScale,
+                gravity: 0.1,
+                active: true,
+                trail: [], // For visual trail
+                distanceTraveled: 0, // Track how far projectile has moved
+                launchedBy: currentPlayer // Track who launched this projectile
+            };
+        }
+        
+        function updateProjectile() {
+            if (!projectile || !projectile.active) return;
+            
+            // Store previous position to calculate distance traveled
+            const prevX = projectile.x;
+            const prevY = projectile.y;
+            
+            // Update position
+            projectile.x += projectile.vx;
+            projectile.y += projectile.vy;
+            projectile.vy += projectile.gravity; // Apply gravity
+            
+            // Update distance traveled
+            const frameDistance = Math.sqrt((projectile.x - prevX) ** 2 + (projectile.y - prevY) ** 2);
+            projectile.distanceTraveled += frameDistance;
+            
+            // Add to trail
+            projectile.trail.push({x: projectile.x, y: projectile.y});
+            if (projectile.trail.length > 10) {
+                projectile.trail.shift(); // Keep trail length manageable
+            }
+            
+            // Check bounds - if projectile goes off screen, it's done
+            if (projectile.x < 0 || projectile.x > CANVAS_WIDTH || projectile.y > CANVAS_HEIGHT) {
+                projectile.active = false;
+                switchTurn();
+                return;
+            }
+            
+            // Check collision with buildings and gorillas (but not immediately after launch)
+            checkProjectileCollision();
+        }
+        
+        function checkProjectileCollision() {
+            // Only check gorilla collisions after projectile has traveled far enough to clear the launching gorilla
+            const minSafeDistance = 25; // Projectile must travel 25px before it can hit gorillas
+            
+            if (projectile.distanceTraveled > minSafeDistance) {
+                // Check for direct gorilla hits (but not the gorilla who launched it)
+                if (leftGorilla && projectile.launchedBy !== 'left') {
+                    const leftDistance = Math.sqrt((projectile.x - leftGorilla.x) ** 2 + (projectile.y - leftGorilla.y) ** 2);
+                    if (leftDistance <= 10) { // 10px radius around gorilla center
+                        explode(projectile.x, projectile.y);
+                        return;
+                    }
+                }
+                
+                if (rightGorilla && projectile.launchedBy !== 'right') {
+                    const rightDistance = Math.sqrt((projectile.x - rightGorilla.x) ** 2 + (projectile.y - rightGorilla.y) ** 2);
+                    if (rightDistance <= 10) { // 10px radius around gorilla center
+                        explode(projectile.x, projectile.y);
+                        return;
+                    }
+                }
+            }
+            
+            // Check if projectile hits any solid building pixel (not in explosion holes)
+            const chunk = worldChunks.get(0);
+            
+            // Check if projectile is in an explosion hole - if so, it passes through
+            if (isPointInExplosionHole(projectile.x, projectile.y)) {
+                return; // Projectile passes through hole
+            }
+            
+            for (const building of chunk.foregroundBuildings) {
+                const buildingTop = CANVAS_HEIGHT - building.height;
+                
+                if (projectile.x >= building.x && 
+                    projectile.x <= building.x + building.width &&
+                    projectile.y >= buildingTop) {
+                    
+                    // Hit a building - create explosion
+                    explode(projectile.x, projectile.y);
+                    return;
+                }
+            }
+        }
+        
+        function explode(x, y) {
+            const blastRadius = 40;
+            
+            // Check if either gorilla is in blast radius AND not already in an explosion hole
+            if (leftGorilla) {
+                const leftDistance = Math.sqrt((x - leftGorilla.x) ** 2 + (y - leftGorilla.y) ** 2);
+                if (leftDistance <= blastRadius && !isPointInExplosionHole(leftGorilla.x, leftGorilla.y)) {
+                    endGame('right'); // Right gorilla wins
+                    return;
+                }
+            }
+            
+            if (rightGorilla) {
+                const rightDistance = Math.sqrt((x - rightGorilla.x) ** 2 + (y - rightGorilla.y) ** 2);
+                if (rightDistance <= blastRadius && !isPointInExplosionHole(rightGorilla.x, rightGorilla.y)) {
+                    endGame('left'); // Left gorilla wins
+                    return;
+                }
+            }
+            
+            // Create circular hole in buildings/terrain
+            createExplosionHole(x, y, blastRadius);
+            
+            // Draw explosion effect briefly
+            drawExplosion(x, y, blastRadius);
+            
+            switchTurn();
+        }
+        
+        // Store explosion holes to avoid redrawing destroyed areas
+        let explosionHoles = [];
+        
+        function createExplosionHole(centerX, centerY, radius) {
+            // Add this hole to our list
+            explosionHoles.push({
+                x: centerX,
+                y: centerY,
+                radius: radius
+            });
+        }
+        
+        function isPointInExplosionHole(x, y) {
+            for (const hole of explosionHoles) {
+                const distance = Math.sqrt((x - hole.x) ** 2 + (y - hole.y) ** 2);
+                if (distance <= hole.radius) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        function fillWindowWithHoles(x, y, width, height) {
+            // Check if window center is in an explosion hole
+            const centerX = x + width / 2;
+            const centerY = y + height / 2;
+            
+            if (!isPointInExplosionHole(centerX, centerY)) {
+                ctx.fillRect(x, y, width, height);
+            }
+            // If in hole, don't draw the window (it's been destroyed)
+        }
+        
+        function fillPathWithHoles() {
+            // For complex shapes, check if the shape intersects with any explosion holes
+            // If no holes, draw normally. If holes exist, skip drawing entirely if the shape
+            // would be mostly destroyed, or draw normally if it's far from holes
+            
+            if (explosionHoles.length === 0) {
+                ctx.fill();
+                return;
+            }
+            
+            // Get approximate bounds of the current path (this is tricky without path inspection)
+            // For now, we'll just draw normally and let projectile collision handle the holes
+            // This is not perfect but avoids the canvas-filling issue
+            ctx.fill();
+        }
+        
+        function fillRectWithHoles(x, y, width, height) {
+            // Check if any part of this rectangle intersects with explosion holes
+            let hasHoles = false;
+            for (const hole of explosionHoles) {
+                // Check if hole intersects with rectangle
+                const distanceX = Math.max(0, Math.max(x - hole.x, hole.x - (x + width)));
+                const distanceY = Math.max(0, Math.max(y - hole.y, hole.y - (y + height)));
+                const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
+                
+                if (distance < hole.radius) {
+                    hasHoles = true;
+                    break;
+                }
+            }
+            
+            if (!hasHoles) {
+                // No holes intersect - draw normally
+                ctx.fillRect(x, y, width, height);
+            } else {
+                // Draw rectangle in small chunks, skipping hole areas
+                const chunkSize = 4; // Draw in 4x4 pixel chunks for reasonable performance
+                for (let chunkY = y; chunkY < y + height; chunkY += chunkSize) {
+                    for (let chunkX = x; chunkX < x + width; chunkX += chunkSize) {
+                        const chunkWidth = Math.min(chunkSize, x + width - chunkX);
+                        const chunkHeight = Math.min(chunkSize, y + height - chunkY);
+                        
+                        // Check if chunk center is in an explosion hole
+                        const centerX = chunkX + chunkWidth / 2;
+                        const centerY = chunkY + chunkHeight / 2;
+                        
+                        if (!isPointInExplosionHole(centerX, centerY)) {
+                            ctx.fillRect(chunkX, chunkY, chunkWidth, chunkHeight);
+                        }
+                    }
+                }
+            }
+        }
+        
+
+        
+        function drawExplosion(x, y, radius) {
+            // Draw explosion effect temporarily
+            ctx.save();
+            
+            // Orange explosion circle
+            ctx.fillStyle = 'rgba(255, 100, 0, 0.8)';
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Yellow inner circle
+            ctx.fillStyle = 'rgba(255, 200, 0, 0.9)';
+            ctx.beginPath();
+            ctx.arc(x, y, radius * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // White hot center
+            ctx.fillStyle = 'rgba(255, 255, 255, 1)';
+            ctx.beginPath();
+            ctx.arc(x, y, radius * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+            
+            // The explosion effect will be visible for this frame only
+            // The next frame will redraw without it
+        }
+        
+        function switchTurn() {
+            currentPlayer = currentPlayer === 'left' ? 'right' : 'left';
+            projectile = null;
+        }
+        
+        function endGame(winner) {
+            gameActive = false;
+            alert(`${winner.toUpperCase()} GORILLA WINS!`);
+            // Reset game
+            setTimeout(() => {
+                gameActive = true;
+                currentPlayer = 'left';
+                projectile = null;
+            }, 2000);
+        }
+        
+        function drawProjectile() {
+            if (!projectile || !projectile.active) return;
+            
+            // Draw trail
+            ctx.strokeStyle = 'rgba(255, 255, 0, 0.7)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < projectile.trail.length; i++) {
+                const point = projectile.trail[i];
+                if (i === 0) {
+                    ctx.moveTo(point.x, point.y);
+                } else {
+                    ctx.lineTo(point.x, point.y);
+                }
+            }
+            ctx.stroke();
+            
+            // Draw projectile
+            ctx.fillStyle = 'yellow';
+            ctx.beginPath();
+            ctx.arc(projectile.x, projectile.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        // Draw cityscape with infinite scrolling
+        function drawCityscape() {
+            // Determine which chunks we need to render
+            const leftChunk = Math.floor(cameraX / WORLD_CHUNK_SIZE);
+            const rightChunk = Math.ceil((cameraX + CANVAS_WIDTH) / WORLD_CHUNK_SIZE);
+            
+            // Generate any missing chunks
+            for (let chunkIndex = leftChunk; chunkIndex <= rightChunk; chunkIndex++) {
+                if (!worldChunks.has(chunkIndex)) {
+                    worldChunks.set(chunkIndex, generateWorldChunk(chunkIndex));
+                }
+            }
+            
+            // Draw layers from back to front for proper depth
+            drawBackgroundLayer(leftChunk, rightChunk);
+            drawMedianLayer(leftChunk, rightChunk);
+            drawForegroundLayer(leftChunk, rightChunk);
+        }
+
+        function drawBackgroundLayer(leftChunk, rightChunk) {
+            for (let chunkIndex = leftChunk; chunkIndex <= rightChunk; chunkIndex++) {
+                const chunk = worldChunks.get(chunkIndex);
+                const chunkWorldX = chunkIndex * WORLD_CHUNK_SIZE;
+                
+                for (const building of chunk.backgroundBuildings) {
+                    const buildingX = chunkWorldX + building.x - cameraX;
+                    if (buildingX + building.width > 0 && buildingX < CANVAS_WIDTH) {
+                        drawBuildingWithHaze(buildingX, building.width, building.height, building.hasFeatures, building.seed, 'background');
+                    }
+                }
+            }
+        }
+
+        function drawMedianLayer(leftChunk, rightChunk) {
+            for (let chunkIndex = leftChunk; chunkIndex <= rightChunk; chunkIndex++) {
+                const chunk = worldChunks.get(chunkIndex);
+                const chunkWorldX = chunkIndex * WORLD_CHUNK_SIZE;
+                
+                for (const building of chunk.medianBuildings) {
+                    const buildingX = chunkWorldX + building.x - cameraX;
+                    if (buildingX + building.width > 0 && buildingX < CANVAS_WIDTH) {
+                        drawBuildingWithHaze(buildingX, building.width, building.height, building.hasFeatures, building.seed, 'median');
+                    }
+                }
+            }
+        }
+
+        function drawForegroundLayer(leftChunk, rightChunk) {
+            for (let chunkIndex = leftChunk; chunkIndex <= rightChunk; chunkIndex++) {
+                const chunk = worldChunks.get(chunkIndex);
+                const chunkWorldX = chunkIndex * WORLD_CHUNK_SIZE;
+                
+                for (const building of chunk.foregroundBuildings) {
+                    const buildingX = chunkWorldX + building.x - cameraX;
+                    if (buildingX + building.width > 0 && buildingX < CANVAS_WIDTH) {
+                        drawBuildingWithHaze(buildingX, building.width, building.height, building.hasFeatures, building.seed, 'foreground');
+                    }
+                }
+            }
+        }
+        
+        // Unified building drawing function with layer-specific haze
+        function drawBuildingWithHaze(x, width, height, hasFeatures, seed, layer) {
+            const buildingY = CANVAS_HEIGHT - height;
+            
+            // Use seeded randomness for consistent building appearance
+            const buildingRandom = (offset) => {
+                const x = Math.sin(seed + offset) * 10000;
+                return x - Math.floor(x);
+            };
+            
+            // Base building colors
+            const baseBuildingColors = [
+                [20, 20, 30],
+                [25, 25, 35],
+                [15, 15, 25],
+                [30, 30, 40],
+                [18, 18, 28]
+            ];
+            const colorIndex = Math.floor(buildingRandom(1) * baseBuildingColors.length);
+            const [baseR, baseG, baseB] = baseBuildingColors[colorIndex];
+            
+            // Apply haze based on layer
+            let adjustedR, adjustedG, adjustedB, windowLightChance;
+            const [sunsetR, sunsetG, sunsetB] = cachedSunsetColor || [255, 140, 0];
+            
+            if (layer === 'background') {
+                // Maximum haze - heavy sunset influence
+                const blendFactor = 0.9;
+                const dimFactor = 0.6;
+                adjustedR = Math.floor(baseR * 0.05 + sunsetR * blendFactor * dimFactor);
+                adjustedG = Math.floor(baseG * 0.05 + sunsetG * blendFactor * dimFactor);
+                adjustedB = Math.floor(baseB * 0.05 + sunsetB * blendFactor * dimFactor);
+                windowLightChance = 0.5;
+            } else if (layer === 'median') {
+                // Medium haze - moderate sunset influence
+                const blendFactor = 0.5;
+                const dimFactor = 0.3;
+                adjustedR = Math.floor(baseR * 0.3 + sunsetR * blendFactor * dimFactor);
+                adjustedG = Math.floor(baseG * 0.3 + sunsetG * blendFactor * dimFactor);
+                adjustedB = Math.floor(baseB * 0.3 + sunsetB * blendFactor * dimFactor);
+                windowLightChance = 0.7;
+            } else { // foreground
+                // No haze - dark silhouettes
+                adjustedR = Math.floor(baseR * 0.15);
+                adjustedG = Math.floor(baseG * 0.15);
+                adjustedB = Math.floor(baseB * 0.15);
+                windowLightChance = 0.9;
+            }
+            
+            ctx.fillStyle = `rgb(${adjustedR}, ${adjustedG}, ${adjustedB})`;
+            
+            // Draw building with or without architectural features
+            if (hasFeatures) {
+                const buildingType = buildingRandom(2);
+                
+                if (buildingType < 0.25) {
+                    // Tapering building
+                    const taperFactor = 0.3 + buildingRandom(3) * 0.4;
+                    drawTaperingBuildingWithFactor(x, buildingY, width, height, taperFactor);
+                    drawTaperingBuildingWindowsWithFactor(x, buildingY, width, height, windowLightChance, taperFactor, seed + 300);
+                } else if (buildingType < 0.4) {
+                    // Pyramid building
+                    drawPyramidBuildingWithSeed(x, buildingY, width, height, seed + 390);
+                    drawPyramidBuildingWindows(x, buildingY, width, height, windowLightChance, seed + 400);
+                } else if (buildingType < 0.65) {
+                    // Spired building
+                    drawBuildingWithSpireSeeded(x, buildingY, width, height, seed + 450);
+                    drawStandardBuildingWindows(x, buildingY, width, height, windowLightChance, seed + 500);
+                } else if (buildingType < 0.8) {
+                    // Setback building
+                    const setbackParams = generateSetbackParamsSeeded(width, height, seed + 550);
+                    drawBuildingWithSetbacksParams(x, buildingY, width, height, setbackParams);
+                    drawSetbackBuildingWindowsParams(x, buildingY, width, height, windowLightChance, setbackParams, seed + 600);
+                } else {
+                    // Standard building with antennae
+                    fillRectWithHoles(x, buildingY, width, height);
+                    drawBuildingAntennaeSeeded(x, buildingY, width, height, seed + 650);
+                    drawStandardBuildingWindows(x, buildingY, width, height, windowLightChance, seed + 700);
+                }
+            } else {
+                // Standard rectangular building
+                fillRectWithHoles(x, buildingY, width, height);
+                drawStandardBuildingWindows(x, buildingY, width, height, windowLightChance, seed + 100);
+            }
+        }
+        
+        // Draw a cached foreground building with consistent random values
+        function drawCachedForegroundBuilding(x, width, height, depthLayer, hasArchitecturalFeatures, seed) {
+            const buildingY = CANVAS_HEIGHT - height;
+            
+            // Use seeded randomness for consistent building appearance
+            const buildingRandom = (offset) => {
+                const x = Math.sin(seed + offset) * 10000;
+                return x - Math.floor(x);
+            };
+            
+            // Draw building base with depth-adjusted color
+            const baseBuildingColors = [
+                [20, 20, 30],
+                [25, 25, 35],
+                [15, 15, 25],
+                [30, 30, 40],
+                [18, 18, 28]
+            ];
+            const colorIndex = Math.floor(buildingRandom(1) * baseBuildingColors.length);
+            const [baseR, baseG, baseB] = baseBuildingColors[colorIndex];
+            
+            // Apply atmospheric perspective - REVERSE the logic since depthLayer seems inverted
+            let adjustedR, adjustedG, adjustedB;
+            if (depthLayer > 0.66) {
+                // This should be foreground - very dark silhouettes
+                adjustedR = Math.floor(baseR * 0.15);
+                adjustedG = Math.floor(baseG * 0.15);
+                adjustedB = Math.floor(baseB * 0.15);
+            } else if (depthLayer > 0.33) {
+                // This should be middle ground - dark but slightly lighter
+                adjustedR = Math.floor(baseR * 0.3);
+                adjustedG = Math.floor(baseG * 0.3);
+                adjustedB = Math.floor(baseB * 0.3);
+            } else {
+                // This should be background - heavy sunset haze
+                const [sunsetR, sunsetG, sunsetB] = cachedSunsetColor || [255, 140, 0];
+                const blendFactor = 0.9; // Very strong blend toward sunset
+                const dimFactor = 0.5; // Strong sunset influence
+                adjustedR = Math.floor(baseR * 0.1 + sunsetR * blendFactor * dimFactor);
+                adjustedG = Math.floor(baseG * 0.1 + sunsetG * blendFactor * dimFactor);
+                adjustedB = Math.floor(baseB * 0.1 + sunsetB * blendFactor * dimFactor);
+            }
+            
+            ctx.fillStyle = `rgb(${adjustedR}, ${adjustedG}, ${adjustedB})`;
+            
+            // Draw building with or without architectural features
+            if (hasArchitecturalFeatures) {
+                const buildingType = buildingRandom(2);
+                
+                if (buildingType < 0.25) {
+                    // Tapering building
+                    const taperFactor = 0.3 + buildingRandom(3) * 0.4;
+                    drawTaperingBuildingWithFactor(x, buildingY, width, height, taperFactor);
+                    drawTaperingBuildingWindowsWithFactor(x, buildingY, width, height, depthLayer, taperFactor, seed + 300);
+                } else if (buildingType < 0.4) {
+                    // Pyramid building with seeded parameters
+                    drawPyramidBuildingWithSeed(x, buildingY, width, height, seed + 390);
+                    drawPyramidBuildingWindows(x, buildingY, width, height, depthLayer, seed + 400);
+                } else if (buildingType < 0.65) {
+                    // Spired building with seeded parameters
+                    drawBuildingWithSpireSeeded(x, buildingY, width, height, seed + 490);
+                    drawStandardBuildingWindows(x, buildingY, width, height, depthLayer, seed + 500);
+                } else {
+                    // Setback building with seeded parameters
+                    const setbackParams = generateSetbackParamsSeeded(width, height, seed + 590);
+                    drawBuildingWithSetbacksParams(x, buildingY, width, height, setbackParams);
+                    drawSetbackBuildingWindowsParams(x, buildingY, width, height, depthLayer, setbackParams, seed + 600);
+                }
+                
+                // Add antennae (30% chance)
+                if (buildingRandom(4) < 0.3) {
+                    drawBuildingAntennaeSeeded(x, buildingY, width, height, seed + 690);
+                }
+            } else {
+                // Standard rectangular building
+                fillRectWithHoles(x, buildingY, width, height);
+                drawStandardBuildingWindows(x, buildingY, width, height, depthLayer, seed + 100);
+            }
+        }
+        
+        // Draw a cached background building
+        function drawCachedBackgroundBuilding(x, width, height, hasFeatures, seed) {
+            const buildingY = CANVAS_HEIGHT - height;
+            
+            // Use seeded randomness for consistent building appearance
+            const buildingRandom = (offset) => {
+                const x = Math.sin(seed + offset) * 10000;
+                return x - Math.floor(x);
+            };
+            
+            // Background buildings fade heavily toward sunset color (furthest back)
+            const backgroundColors = [
+                [8, 8, 12],   // Very dark base
+                [10, 10, 15],
+                [6, 6, 10],
+                [12, 12, 18],
+                [7, 7, 11]
+            ];
+            const colorIndex = Math.floor(buildingRandom(1) * backgroundColors.length);
+            const [baseR, baseG, baseB] = backgroundColors[colorIndex];
+            
+            // Background buildings fade very strongly toward sunset (maximum haze)
+            const [sunsetR, sunsetG, sunsetB] = cachedSunsetColor || [255, 140, 0];
+            const blendFactor = 1.0; // Maximum blend for deepest background
+            const dimFactor = 0.6; // Very strong sunset influence
+            const adjustedR = Math.floor(baseR * 0.05 + sunsetR * blendFactor * dimFactor);
+            const adjustedG = Math.floor(baseG * 0.05 + sunsetG * blendFactor * dimFactor);
+            const adjustedB = Math.floor(baseB * 0.05 + sunsetB * blendFactor * dimFactor);
+            
+            ctx.fillStyle = `rgb(${adjustedR}, ${adjustedG}, ${adjustedB})`;
+            
+            // Add architectural variations for background buildings
+            if (hasFeatures) {
+                const buildingType = buildingRandom(2);
+                
+                if (buildingType < 0.5) {
+                    // Tapering building
+                    const taperFactor = 0.3 + buildingRandom(3) * 0.4;
+                    drawTaperingBuildingWithFactor(x, buildingY, width, height, taperFactor);
+                    drawBackgroundTaperingWindowsWithFactor(x, buildingY, width, height, taperFactor, seed + 700);
+                } else {
+                    // Simple spire for background buildings
+                    drawBuildingWithSpireSeeded(x, buildingY, width, height, seed + 790);
+                    drawBackgroundBuildingWindows(x, buildingY, width, height, seed + 800);
+                }
+                
+                // Add smaller antennae to background buildings (20% chance)
+                if (buildingRandom(4) < 0.2) {
+                    drawBackgroundBuildingAntennaeSeeded(x, buildingY, width, height, seed + 890);
+                }
+            } else {
+                // Standard rectangular background building
+                fillRectWithHoles(x, buildingY, width, height);
+                drawBackgroundBuildingWindows(x, buildingY, width, height, seed + 200);
+            }
+        }
+        
+        // Update camera position and handle input
+        function updateCamera() {
+            if (keys.left) {
+                cameraX -= SCROLL_SPEED;
+            }
+            if (keys.right) {
+                cameraX += SCROLL_SPEED;
+            }
+            
+            // Prevent scrolling too far left
+            cameraX = Math.max(0, cameraX);
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // updateCamera(); // Disabled for now while adding gorillas
+            
+            // Update projectile if active
+            updateProjectile();
+            
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Render the current frame
+        function render() {
             // Clear canvas
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
             
@@ -120,21 +1144,873 @@
             
             // Add stars
             drawStars();
+            
+            // Draw the cityscape with current camera position
+            drawCityscape();
+            
+            // Draw gorillas
+            if (leftGorilla) {
+                drawGorilla(leftGorilla.x, leftGorilla.y, true);
+            }
+            
+            if (rightGorilla) {
+                drawGorilla(rightGorilla.x, rightGorilla.y, false);
+            }
+            
+            // Draw projectile
+            drawProjectile();
         }
+        
+        // Draw a background building (now used for the background layer)
+        function drawBackgroundBuilding(x, width, height) {
+            const y = CANVAS_HEIGHT - height;
+            
+            // Background buildings are darker than normal buildings
+            const backgroundColors = [
+                [8, 8, 12],   // Very dark
+                [10, 10, 15],
+                [6, 6, 10],
+                [12, 12, 18],
+                [7, 7, 11]
+            ];
+            const colorIndex = Math.floor(seedRandom(randOffset++) * backgroundColors.length);
+            const [r, g, b] = backgroundColors[colorIndex];
+            
+            // Add architectural variations for background buildings too
+            const hasArchitecturalFeatures = seedRandom(randOffset++) < 0.3; // 30% chance for background
+            
+            if (hasArchitecturalFeatures) {
+                drawBackgroundBuildingWithFeatures(x, y, width, height, r, g, b);
+            } else {
+                // Standard rectangular background building
+                            ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+            fillRectWithHoles(x, y, width, height);
+                
+                // Add windows for standard background buildings
+                drawBackgroundBuildingWindows(x, y, width, height);
+            }
+        }
+        
+        // Draw foreground building with architectural features
+        function drawBuildingWithFeatures(x, y, width, height, r, g, b, depthLayer) {
+            const buildingType = seedRandom(randOffset++);
+            
+            ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+            
+            if (buildingType < 0.25) {
+                // Tapering building - narrower at top
+                const taperFactor = 0.3 + seedRandom(randOffset++) * 0.4; // Store the taper factor
+                drawTaperingBuildingWithFactor(x, y, width, height, taperFactor);
+                drawTaperingBuildingWindowsWithFactor(x, y, width, height, depthLayer, taperFactor);
+            } else if (buildingType < 0.4) {
+                // Transamerica Tower style - pyramid shape
+                drawPyramidBuilding(x, y, width, height);
+                drawPyramidBuildingWindows(x, y, width, height, depthLayer);
+            } else if (buildingType < 0.65) {
+                // Building with spire
+                drawBuildingWithSpire(x, y, width, height);
+                drawStandardBuildingWindows(x, y, width, height, depthLayer); // Spire buildings have regular base
+            } else {
+                // Building with setbacks (stepped pyramid style)
+                const setbackParams = generateSetbackParams(width, height); // Store setback parameters
+                drawBuildingWithSetbacksParams(x, y, width, height, setbackParams);
+                drawSetbackBuildingWindowsParams(x, y, width, height, depthLayer, setbackParams);
+            }
+            
+            // Add antennae to some buildings (30% chance)
+            if (seedRandom(randOffset++) < 0.3) {
+                drawBuildingAntennae(x, y, width, height);
+            }
+        }
+        
+        // Draw background building with architectural features (smaller scale)
+        function drawBackgroundBuildingWithFeatures(x, y, width, height, r, g, b) {
+            const buildingType = seedRandom(randOffset++);
+            
+            ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+            
+            if (buildingType < 0.3) {
+                // Tapering building
+                const taperFactor = 0.3 + seedRandom(randOffset++) * 0.4; // Store the taper factor
+                drawTaperingBuildingWithFactor(x, y, width, height, taperFactor);
+                drawBackgroundTaperingWindowsWithFactor(x, y, width, height, taperFactor);
+            } else if (buildingType < 0.5) {
+                // Pyramid building for background
+                drawPyramidBuilding(x, y, width, height);
+                drawBackgroundPyramidWindows(x, y, width, height, seed + 900);
+            } else {
+                // Simple spire for background buildings
+                drawBuildingWithSpire(x, y, width, height);
+                drawBackgroundBuildingWindows(x, y, width, height, seed + 800); // Regular windows for spire base
+            }
+            
+            // Add smaller antennae to background buildings (20% chance)
+            if (buildingRandom(4) < 0.2) {
+                drawBackgroundBuildingAntennae(x, y, width, height);
+            }
+        }
+        
+        // Draw a building that tapers toward the top with specified factor
+        function drawTaperingBuildingWithFactor(x, y, width, height, taperFactor) {
+            // Always draw tapering buildings as horizontal strips for consistency
+            // This ensures the shape doesn't change when explosion holes are added
+            const topWidth = width * taperFactor;
+            const stripHeight = 2; // Smaller strips for smoother appearance
+            
+            for (let stripY = y; stripY < y + height; stripY += stripHeight) {
+                const progress = (stripY - y) / height;
+                const currentWidth = topWidth + (width - topWidth) * (1 - progress);
+                const currentOffsetX = (width - currentWidth) / 2;
+                const actualStripHeight = Math.min(stripHeight, y + height - stripY);
+                
+                fillRectWithHoles(x + currentOffsetX, stripY, currentWidth, actualStripHeight);
+            }
+        }
+        
+        // Draw a pyramid building (Transamerica Tower style)
+        function drawPyramidBuilding(x, y, width, height) {
+            // Pyramid tapers much more dramatically than regular tapering buildings
+            const pyramidTaperFactor = 0.05 + Math.random() * 0.15; // Very sharp taper (5-20% at top)
+            
+            // Use the same approach as tapering buildings
+            drawTaperingBuildingWithFactor(x, y, width, height, pyramidTaperFactor);
+            
+            // Add a thin spire on top (like Transamerica)
+            const spireHeight = 20 + Math.random() * 30; // 20-50px tall spire
+            const spireWidth = 1 + Math.random() * 2; // Very thin spire
+            const spireX = x + width / 2 - spireWidth / 2;
+            const spireY = y - spireHeight;
+            
+            fillRectWithHoles(spireX, spireY, spireWidth, spireHeight);
+        }
+        
+        // Draw a building with a spire on top
+        function drawBuildingWithSpire(x, y, width, height) {
+            // Main building body
+            fillRectWithHoles(x, y, width, height);
+            
+            // Spire dimensions
+            const spireHeight = 15 + Math.random() * 25; // 15-40px tall spire
+            const spireWidth = Math.min(width * 0.3, 8 + Math.random() * 12); // Max 30% of building width, 8-20px
+            const spireX = x + (width - spireWidth) / 2;
+            const spireY = y - spireHeight;
+            
+            // Draw spire
+            fillRectWithHoles(spireX, spireY, spireWidth, spireHeight);
+            
+            // Optional spire cap (50% chance)
+            if (Math.random() < 0.5) {
+                const capHeight = 3 + Math.random() * 4;
+                const capWidth = spireWidth + 4;
+                const capX = spireX - 2;
+                const capY = spireY - capHeight;
+                fillRectWithHoles(capX, capY, capWidth, capHeight);
+            }
+        }
+        
+        // Generate setback parameters
+        function generateSetbackParams(width, height) {
+            const numSetbacks = 2 + Math.floor(Math.random() * 3); // 2-4 setbacks
+            const sections = [];
+            
+            let currentY = height;
+            let currentWidth = width;
+            let currentX = 0; // Relative to building start
+            
+            for (let i = 0; i < numSetbacks; i++) {
+                const sectionHeight = height / numSetbacks;
+                const sectionTop = currentY - sectionHeight;
+                
+                sections.push({
+                    x: currentX,
+                    y: sectionTop,
+                    width: currentWidth,
+                    height: sectionHeight
+                });
+                
+                // Prepare for next setback (if not the last one)
+                if (i < numSetbacks - 1) {
+                    const setbackAmount = width * (0.1 + Math.random() * 0.15); // 10-25% setback
+                    currentWidth = Math.max(currentWidth - setbackAmount, width * 0.3); // Minimum 30% of original
+                    currentX += setbackAmount / 2; // Center the setback
+                }
+                
+                currentY = sectionTop;
+            }
+            
+            return sections;
+        }
+        
+        // Draw a building with setbacks using stored parameters
+        function drawBuildingWithSetbacksParams(x, y, width, height, setbackParams) {
+            for (const section of setbackParams) {
+                fillRectWithHoles(x + section.x, y + section.y, section.width, section.height);
+            }
+        }
+        
+        // Draw a pyramid building with seeded randomness
+        function drawPyramidBuildingWithSeed(x, y, width, height, seed) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            
+            // Pyramid tapers much more dramatically than regular tapering buildings
+            const pyramidTaperFactor = 0.05 + seedRandom(1) * 0.15; // Very sharp taper (5-20% at top)
+            
+            // Use the same approach as tapering buildings
+            drawTaperingBuildingWithFactor(x, y, width, height, pyramidTaperFactor);
+            
+            // Add a thin spire on top (like Transamerica)
+            const spireHeight = 20 + seedRandom(2) * 30; // 20-50px tall spire
+            const spireWidth = 1 + seedRandom(3) * 2; // Very thin spire
+            const spireX = x + width / 2 - spireWidth / 2;
+            const spireY = y - spireHeight;
+            
+            fillRectWithHoles(spireX, spireY, spireWidth, spireHeight);
+        }
+        
+        // Draw a building with spire using seeded randomness
+        function drawBuildingWithSpireSeeded(x, y, width, height, seed) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            
+            // Main building body
+            fillRectWithHoles(x, y, width, height);
+            
+            // Spire dimensions
+            const spireHeight = 15 + seedRandom(1) * 25; // 15-40px tall spire
+            const spireWidth = Math.min(width * 0.3, 8 + seedRandom(2) * 12); // Max 30% of building width, 8-20px
+            const spireX = x + (width - spireWidth) / 2;
+            const spireY = y - spireHeight;
+            
+            // Draw spire
+            fillRectWithHoles(spireX, spireY, spireWidth, spireHeight);
+            
+            // Optional spire cap (50% chance)
+            if (seedRandom(3) < 0.5) {
+                const capHeight = 3 + seedRandom(4) * 4;
+                const capWidth = spireWidth + 4;
+                const capX = spireX - 2;
+                const capY = spireY - capHeight;
+                fillRectWithHoles(capX, capY, capWidth, capHeight);
+            }
+        }
+        
+        // Generate setback parameters with seeded randomness
+        function generateSetbackParamsSeeded(width, height, seed) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            
+            const numSetbacks = 2 + Math.floor(seedRandom(1) * 3); // 2-4 setbacks
+            const sections = [];
+            
+            let currentY = height;
+            let currentWidth = width;
+            let currentX = 0; // Relative to building start
+            
+            for (let i = 0; i < numSetbacks; i++) {
+                const sectionHeight = height / numSetbacks;
+                const sectionTop = currentY - sectionHeight;
+                
+                sections.push({
+                    x: currentX,
+                    y: sectionTop,
+                    width: currentWidth,
+                    height: sectionHeight
+                });
+                
+                // Prepare for next setback (if not the last one)
+                if (i < numSetbacks - 1) {
+                    const setbackAmount = width * (0.1 + seedRandom(i + 2) * 0.15); // 10-25% setback
+                    currentWidth = Math.max(currentWidth - setbackAmount, width * 0.3); // Minimum 30% of original
+                    currentX += setbackAmount / 2; // Center the setback
+                }
+                
+                currentY = sectionTop;
+            }
+            
+            return sections;
+        }
+        
+        // Draw antennae with seeded randomness
+        function drawBuildingAntennaeSeeded(x, y, width, height, seed) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            
+            const numAntennae = 1 + Math.floor(seedRandom(1) * 3); // 1-3 antennae
+            
+            for (let i = 0; i < numAntennae; i++) {
+                // Position antennae across the rooftop
+                const antennaX = x + (width / (numAntennae + 1)) * (i + 1);
+                const antennaHeight = 15 + seedRandom(i + 2) * 40; // 15-55px tall
+                const antennaWidth = 1 + seedRandom(i + 10) * 1.5; // Very thin 1-2.5px
+                const antennaY = y - antennaHeight;
+                
+                // Set antenna color (darker than building)
+                ctx.fillStyle = 'rgb(10, 10, 15)';
+                fillRectWithHoles(antennaX - antennaWidth/2, antennaY, antennaWidth, antennaHeight);
+                
+                // Add small antenna ball/tip (40% chance)
+                if (seedRandom(i + 20) < 0.4) {
+                    const ballSize = 2 + seedRandom(i + 21) * 2;
+                    fillRectWithHoles(antennaX - ballSize/2, antennaY - ballSize, ballSize, ballSize);
+                }
+                
+                // Add cross-beam (30% chance for radio antenna look)
+                if (seedRandom(i + 30) < 0.3) {
+                    const beamWidth = 4 + seedRandom(i + 31) * 6;
+                    const beamHeight = 1;
+                    const beamY = antennaY + antennaHeight * 0.3;
+                    fillRectWithHoles(antennaX - beamWidth/2, beamY, beamWidth, beamHeight);
+                }
+            }
+        }
+        
+        // Draw background antennae with seeded randomness
+        function drawBackgroundBuildingAntennaeSeeded(x, y, width, height, seed) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            
+            const numAntennae = 1 + Math.floor(seedRandom(1) * 2); // 1-2 antennae for background
+            
+            for (let i = 0; i < numAntennae; i++) {
+                const antennaX = x + (width / (numAntennae + 1)) * (i + 1);
+                const antennaHeight = 8 + seedRandom(i + 2) * 20; // Smaller for background
+                const antennaWidth = 1; // Very thin for background
+                const antennaY = y - antennaHeight;
+                
+                ctx.fillStyle = 'rgb(5, 5, 8)';
+                fillRectWithHoles(antennaX - antennaWidth/2, antennaY, antennaWidth, antennaHeight);
+            }
+        }
+        
+        // Draw spiky antennae on building rooftops
+        function drawBuildingAntennae(x, y, width, height) {
+            const numAntennae = 1 + Math.floor(Math.random() * 3); // 1-3 antennae
+            
+            for (let i = 0; i < numAntennae; i++) {
+                // Position antennae across the rooftop
+                const antennaX = x + (width / (numAntennae + 1)) * (i + 1);
+                const antennaHeight = 15 + Math.random() * 40; // 15-55px tall
+                const antennaWidth = 1 + Math.random() * 1.5; // Very thin 1-2.5px
+                const antennaY = y - antennaHeight;
+                
+                // Set antenna color (darker than building)
+                ctx.fillStyle = 'rgb(10, 10, 15)';
+                fillRectWithHoles(antennaX - antennaWidth/2, antennaY, antennaWidth, antennaHeight);
+                
+                // Add small antenna ball/tip (40% chance)
+                if (Math.random() < 0.4) {
+                    const ballSize = 2 + Math.random() * 2;
+                    fillRectWithHoles(antennaX - ballSize/2, antennaY - ballSize, ballSize, ballSize);
+                }
+                
+                // Add cross-beam (30% chance for radio antenna look)
+                if (Math.random() < 0.3) {
+                    const beamWidth = 4 + Math.random() * 6;
+                    const beamHeight = 1;
+                    const beamY = antennaY + antennaHeight * 0.3;
+                    fillRectWithHoles(antennaX - beamWidth/2, beamY, beamWidth, beamHeight);
+                }
+            }
+        }
+        
+        // Draw smaller antennae for background buildings
+        function drawBackgroundBuildingAntennae(x, y, width, height) {
+            const numAntennae = 1 + Math.floor(Math.random() * 2); // 1-2 antennae for background
+            
+            for (let i = 0; i < numAntennae; i++) {
+                const antennaX = x + (width / (numAntennae + 1)) * (i + 1);
+                const antennaHeight = 8 + Math.random() * 20; // Smaller for background
+                const antennaWidth = 1; // Very thin for background
+                const antennaY = y - antennaHeight;
+                
+                ctx.fillStyle = 'rgb(5, 5, 8)';
+                fillRectWithHoles(antennaX - antennaWidth/2, antennaY, antennaWidth, antennaHeight);
+            }
+        }
+        
+        // Draw windows for pyramid buildings
+        function drawPyramidBuildingWindows(x, y, width, height, depthLayer, seed = 4000) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            let randOffset = 10;
+            
+            const pyramidTaperFactor = 0.05 + seedRandom(randOffset++) * 0.15; // Match pyramid taper
+            const floorHeight = 15 + seedRandom(randOffset++) * 10;
+            const numFloors = Math.floor(height / floorHeight);
+            // Fix depth logic - higher depthLayer values are foreground (darker), need more lit windows
+            const windowLightChance = depthLayer > 0.66 ? 0.9 : (depthLayer > 0.33 ? 0.8 : 0.6);
+            
+            for (let floor = 0; floor < numFloors; floor++) {
+                // Start from bottom of building and work up
+                const floorY = y + height - (floor + 1) * floorHeight;
+                const windowHeight = Math.floor(floorHeight * 0.4 + seedRandom(randOffset++) * floorHeight * 0.3);
+                const windowY = floorY + (floorHeight - windowHeight) / 2;
+                
+                // Calculate floor width based on pyramid taper - more dramatic than regular taper
+                const floorProgress = floor / numFloors; // 0 at bottom, 1 at top
+                const floorWidth = width * (1 - floorProgress * (1 - pyramidTaperFactor));
+                const floorOffset = (width - floorWidth) / 2;
+                const floorX = x + floorOffset;
+                
+                // Only place windows if floor is wide enough
+                if (floorWidth > 10) {
+                    const windowSpacing = 6 + seedRandom(randOffset++) * 4; // Closer spacing for pyramid
+                    let windowX = floorX + windowSpacing / 2;
+                    
+                    while (windowX < floorX + floorWidth - 10) { // Leave 10px margin on right
+                        const windowWidth = 3 + seedRandom(randOffset++) * 6; // Slightly smaller windows
+                        
+                        if (windowX + windowWidth < floorX + floorWidth - windowSpacing / 2) {
+                            if (seedRandom(randOffset++) < windowLightChance) {
+                                const windowColors = [
+                                    'rgb(255, 255, 255)',
+                                    'rgb(255, 255, 200)',
+                                    'rgb(255, 220, 100)',
+                                    'rgb(255, 180, 80)',
+                                    'rgb(255, 200, 150)',
+                                    'rgb(200, 200, 255)'
+                                ];
+                                const colorIndex = Math.floor(seedRandom(randOffset++) * windowColors.length);
+                                ctx.fillStyle = windowColors[colorIndex];
+                                fillWindowWithHoles(windowX, windowY, windowWidth, windowHeight);
+                            }
+                        }
+                        
+                        windowX += windowWidth + windowSpacing + seedRandom(randOffset++) * 3;
+                    }
+                }
+            }
+        }
+        
+        // Draw windows for background pyramid buildings
+        function drawBackgroundPyramidWindows(x, y, width, height, seed = 5000) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            let randOffset = 10;
+            const pyramidTaperFactor = 0.05 + seedRandom(randOffset++) * 0.15;
+            const floorHeight = 8 + seedRandom(randOffset++) * 6;
+            const numFloors = Math.floor(height / floorHeight);
+            
+            for (let floor = 0; floor < numFloors; floor++) {
+                // Start from bottom of building and work up
+                const floorY = y + height - (floor + 1) * floorHeight;
+                const windowHeight = Math.floor(floorHeight * 0.3 + seedRandom(randOffset++) * floorHeight * 0.2);
+                const windowY = floorY + (floorHeight - windowHeight) / 2;
+                
+                // Calculate floor width based on pyramid taper
+                const floorProgress = floor / numFloors;
+                const floorWidth = width * (1 - floorProgress * (1 - pyramidTaperFactor));
+                const floorOffset = (width - floorWidth) / 2;
+                const floorX = x + floorOffset;
+                
+                // Only place windows if floor is wide enough
+                if (floorWidth > 6) {
+                    const windowSpacing = 4 + seedRandom(randOffset++) * 3;
+                    let windowX = floorX + windowSpacing / 2;
+                    
+                    while (windowX < floorX + floorWidth - 10) { // Leave 10px margin on right
+                        const windowWidth = 2 + seedRandom(randOffset++) * 3; // Small background windows
+                        
+                        if (windowX + windowWidth < floorX + floorWidth - windowSpacing / 2) {
+                            if (seedRandom(randOffset++) < 0.4) {
+                                const windowColors = [
+                                    'rgb(255, 255, 255)',
+                                    'rgb(255, 255, 200)',
+                                    'rgb(255, 220, 100)',
+                                    'rgb(255, 180, 80)',
+                                    'rgb(255, 200, 150)',
+                                    'rgb(200, 200, 255)'
+                                ];
+                                const colorIndex = Math.floor(seedRandom(randOffset++) * windowColors.length);
+                                let windowColor = windowColors[colorIndex];
+                                
+                                const rgb = windowColor.match(/\d+/g);
+                                const dimmedR = Math.floor(parseInt(rgb[0]) * 0.4);
+                                const dimmedG = Math.floor(parseInt(rgb[1]) * 0.4);
+                                const dimmedB = Math.floor(parseInt(rgb[2]) * 0.4);
+                                windowColor = `rgb(${dimmedR}, ${dimmedG}, ${dimmedB})`;
+                                
+                                ctx.fillStyle = windowColor;
+                                fillWindowWithHoles(windowX, windowY, windowWidth, windowHeight);
+                            }
+                        }
+                        
+                        windowX += windowWidth + windowSpacing + seedRandom(randOffset++) * 2;
+                    }
+                }
+            }
+        }
+        
+        // Draw windows for standard rectangular buildings
+        function drawStandardBuildingWindows(x, y, width, height, depthLayer, seed = 1000) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            
+            const floorHeight = 15 + seedRandom(1) * 10; // 15-25px per floor
+            const numFloors = Math.floor(height / floorHeight);
+            // Fix depth logic - higher depthLayer values are foreground (darker), need more lit windows
+            const windowLightChance = depthLayer > 0.66 ? 0.9 : (depthLayer > 0.33 ? 0.8 : 0.6);
+            
+            let randOffset = 10;
+            for (let floor = 0; floor < numFloors; floor++) {
+                // Start from bottom of building and work up
+                const floorY = y + height - (floor + 1) * floorHeight;
+                const windowHeight = Math.floor(floorHeight * 0.4 + seedRandom(randOffset++) * floorHeight * 0.3);
+                const windowY = floorY + (floorHeight - windowHeight) / 2;
+                
+                const windowSpacing = 8 + seedRandom(randOffset++) * 6;
+                let windowX = x + windowSpacing / 2;
+                
+                let windowIndex = 0;
+                while (windowX < x + width - 10) { // Leave 10px margin on right
+                    const windowWidth = 4 + seedRandom(randOffset++) * 8;
+                    
+                    if (windowX + windowWidth < x + width - 5) { // Check if window fits
+                        if (seedRandom(randOffset++) < windowLightChance) {
+                            const windowColors = [
+                                'rgb(255, 255, 255)',
+                                'rgb(255, 255, 200)',
+                                'rgb(255, 220, 100)',
+                                'rgb(255, 180, 80)',
+                                'rgb(255, 200, 150)',
+                                'rgb(200, 200, 255)'
+                            ];
+                            const colorIndex = Math.floor(seedRandom(randOffset++) * windowColors.length);
+                            ctx.fillStyle = windowColors[colorIndex];
+                            fillWindowWithHoles(windowX, windowY, windowWidth, windowHeight);
+                        }
+                    }
+                    
+                    windowX += windowWidth + windowSpacing + seedRandom(randOffset++) * 4;
+                    windowIndex++;
+                }
+            }
+        }
+        
+        // Draw windows for tapering buildings using the exact taper factor
+        function drawTaperingBuildingWindowsWithFactor(x, y, width, height, depthLayer, taperFactor, seed = 3000) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            
+            const floorHeight = 15 + seedRandom(1) * 10;
+            const numFloors = Math.floor(height / floorHeight);
+            // Fix depth logic - higher depthLayer values are foreground (darker), need more lit windows
+            const windowLightChance = depthLayer > 0.66 ? 0.9 : (depthLayer > 0.33 ? 0.8 : 0.6);
+            let randOffset = 10;
+            
+            for (let floor = 0; floor < numFloors; floor++) {
+                // Start from bottom of building and work up
+                const floorY = y + height - (floor + 1) * floorHeight;
+                const windowHeight = Math.floor(floorHeight * 0.4 + seedRandom(randOffset++) * floorHeight * 0.3);
+                const windowY = floorY + (floorHeight - windowHeight) / 2;
+                
+                // Calculate floor width based on taper - floor 0 is bottom (widest), higher floors are narrower
+                const floorProgress = floor / numFloors; // 0 at bottom, 1 at top
+                const floorWidth = width * (1 - floorProgress * (1 - taperFactor));
+                const floorOffset = (width - floorWidth) / 2;
+                const floorX = x + floorOffset;
+                
+                const windowSpacing = 8 + seedRandom(randOffset++) * 6;
+                let windowX = floorX + windowSpacing / 2;
+                
+                while (windowX < floorX + floorWidth - 10) { // Leave 10px margin on right
+                    const windowWidth = 4 + seedRandom(randOffset++) * 8;
+                    
+                    if (windowX + windowWidth < floorX + floorWidth - 5) { // Check if window fits
+                        if (seedRandom(randOffset++) < windowLightChance) {
+                            const windowColors = [
+                                'rgb(255, 255, 255)',
+                                'rgb(255, 255, 200)',
+                                'rgb(255, 220, 100)',
+                                'rgb(255, 180, 80)',
+                                'rgb(255, 200, 150)',
+                                'rgb(200, 200, 255)'
+                            ];
+                            const colorIndex = Math.floor(seedRandom(randOffset++) * windowColors.length);
+                            const windowColor = windowColors[colorIndex];
+                            ctx.fillStyle = windowColor;
+                            fillWindowWithHoles(windowX, windowY, windowWidth, windowHeight);
+                        }
+                    }
+                    
+                    windowX += windowWidth + windowSpacing + seedRandom(randOffset++) * 4;
+                }
+            }
+        }
+        
+        // Draw windows for setback buildings using stored parameters
+        function drawSetbackBuildingWindowsParams(x, y, width, height, depthLayer, setbackParams, seed = 6000) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            let randOffset = 10;
+            const floorHeight = 15 + seedRandom(randOffset++) * 10;
+            // Fix depth logic - higher depthLayer values are foreground (darker), need more lit windows
+            const windowLightChance = depthLayer > 0.66 ? 0.9 : (depthLayer > 0.33 ? 0.8 : 0.6);
+            
+            for (const section of setbackParams) {
+                const sectionX = x + section.x;
+                const sectionY = y + section.y;
+                const sectionWidth = section.width;
+                const sectionHeight = section.height;
+                
+                const floorsInSection = Math.floor(sectionHeight / floorHeight);
+                
+                for (let floor = 0; floor < floorsInSection; floor++) {
+                    const floorY = sectionY + floor * floorHeight;
+                    const windowHeight = Math.floor(floorHeight * 0.4 + seedRandom(randOffset++) * floorHeight * 0.3);
+                    const windowY = floorY + (floorHeight - windowHeight) / 2;
+                    
+                    const windowSpacing = 8 + seedRandom(randOffset++) * 6;
+                    let windowX = sectionX + windowSpacing / 2;
+                    
+                    while (windowX < sectionX + sectionWidth - 10) { // Leave 10px margin on right
+                        const windowWidth = 4 + seedRandom(randOffset++) * 8;
+                        
+                        if (windowX + windowWidth < sectionX + sectionWidth - 5) { // Check if window fits
+                            if (seedRandom(randOffset++) < windowLightChance) {
+                                const windowColors = [
+                                    'rgb(255, 255, 255)',
+                                    'rgb(255, 255, 200)',
+                                    'rgb(255, 220, 100)',
+                                    'rgb(255, 180, 80)',
+                                    'rgb(255, 200, 150)',
+                                    'rgb(200, 200, 255)'
+                                ];
+                                const colorIndex = Math.floor(seedRandom(randOffset++) * windowColors.length);
+                                ctx.fillStyle = windowColors[colorIndex];
+                                fillWindowWithHoles(windowX, windowY, windowWidth, windowHeight);
+                            }
+                        }
+                        
+                        windowX += windowWidth + windowSpacing + seedRandom(randOffset++) * 4;
+                    }
+                }
+            }
+        }
+        
+        // Draw windows for standard background buildings
+        function drawBackgroundBuildingWindows(x, y, width, height, seed = 2000) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            
+            const floorHeight = 8 + seedRandom(1) * 6;
+            const numFloors = Math.floor(height / floorHeight);
+            
+            let randOffset = 10;
+            for (let floor = 0; floor < numFloors; floor++) {
+                // Start from bottom of building and work up
+                const floorY = y + height - (floor + 1) * floorHeight;
+                const windowHeight = Math.floor(floorHeight * 0.3 + seedRandom(randOffset++) * floorHeight * 0.2);
+                const windowY = floorY + (floorHeight - windowHeight) / 2;
+                
+                const windowSpacing = 6 + seedRandom(randOffset++) * 4;
+                let windowX = x + windowSpacing / 2;
+                
+                while (windowX < x + width - 8) { // Leave 8px margin on right for background buildings
+                    const windowWidth = 2 + seedRandom(randOffset++) * 4;
+                    
+                    if (windowX + windowWidth < x + width - 3) { // Check if window fits
+                        if (seedRandom(randOffset++) < 0.4) {
+                            const windowColors = [
+                                'rgb(255, 255, 255)',
+                                'rgb(255, 255, 200)',
+                                'rgb(255, 220, 100)',
+                                'rgb(255, 180, 80)',
+                                'rgb(255, 200, 150)',
+                                'rgb(200, 200, 255)'
+                            ];
+                            const colorIndex = Math.floor(seedRandom(randOffset++) * windowColors.length);
+                            let windowColor = windowColors[colorIndex];
+                            
+                            const rgb = windowColor.match(/\d+/g);
+                            const dimmedR = Math.floor(parseInt(rgb[0]) * 0.4);
+                            const dimmedG = Math.floor(parseInt(rgb[1]) * 0.4);
+                            const dimmedB = Math.floor(parseInt(rgb[2]) * 0.4);
+                            windowColor = `rgb(${dimmedR}, ${dimmedG}, ${dimmedB})`;
+                            
+                            ctx.fillStyle = windowColor;
+                            fillWindowWithHoles(windowX, windowY, windowWidth, windowHeight);
+                        }
+                    }
+                    
+                    windowX += windowWidth + windowSpacing + seedRandom(randOffset++) * 2;
+                }
+            }
+        }
+        
+        // Draw windows for background tapering buildings using exact taper factor
+        function drawBackgroundTaperingWindowsWithFactor(x, y, width, height, taperFactor, seed = 7000) {
+            const seedRandom = (offset) => {
+                const val = Math.sin(seed + offset) * 10000;
+                return val - Math.floor(val);
+            };
+            let randOffset = 10;
+            const floorHeight = 8 + seedRandom(randOffset++) * 6;
+            const numFloors = Math.floor(height / floorHeight);
+            
+            for (let floor = 0; floor < numFloors; floor++) {
+                // Start from bottom of building and work up
+                const floorY = y + height - (floor + 1) * floorHeight;
+                const windowHeight = Math.floor(floorHeight * 0.3 + seedRandom(randOffset++) * floorHeight * 0.2);
+                const windowY = floorY + (floorHeight - windowHeight) / 2;
+                
+                // Calculate floor width based on taper - EXACT same calculation as building
+                const floorProgress = floor / numFloors;
+                const floorWidth = width * (1 - floorProgress * (1 - taperFactor));
+                const floorOffset = (width - floorWidth) / 2;
+                const floorX = x + floorOffset;
+                
+                const windowSpacing = 6 + seedRandom(randOffset++) * 4;
+                let windowX = floorX + windowSpacing / 2;
+                
+                while (windowX < floorX + floorWidth - 8) { // Leave 8px margin on right for background
+                    const windowWidth = 2 + seedRandom(randOffset++) * 4;
+                    
+                    if (windowX + windowWidth < floorX + floorWidth - 3) { // Check if window fits
+                        if (seedRandom(randOffset++) < 0.4) {
+                            const windowColors = [
+                                'rgb(255, 255, 255)',
+                                'rgb(255, 255, 200)',
+                                'rgb(255, 220, 100)',
+                                'rgb(255, 180, 80)',
+                                'rgb(255, 200, 150)',
+                                'rgb(200, 200, 255)'
+                            ];
+                            const colorIndex = Math.floor(seedRandom(randOffset++) * windowColors.length);
+                            let windowColor = windowColors[colorIndex];
+                            
+                            const rgb = windowColor.match(/\d+/g);
+                            const dimmedR = Math.floor(parseInt(rgb[0]) * 0.4);
+                            const dimmedG = Math.floor(parseInt(rgb[1]) * 0.4);
+                            const dimmedB = Math.floor(parseInt(rgb[2]) * 0.4);
+                            windowColor = `rgb(${dimmedR}, ${dimmedG}, ${dimmedB})`;
+                            
+                            ctx.fillStyle = windowColor;
+                            fillWindowWithHoles(windowX, windowY, windowWidth, windowHeight);
+                        }
+                    }
+                    
+                    windowX += windowWidth + windowSpacing + seedRandom(randOffset++) * 2;
+                }
+            }
+        }
+        
+        // Initialize the game
+        function init() {
+            // Generate initial chunk
+            worldChunks.set(0, generateWorldChunk(0));
+            
+            // Position gorillas
+            findGorillaBuildings();
+            
+            // Start the game loop
+            gameLoop();
+        }
+        
+        // Input event handlers
+        document.addEventListener('keydown', function(event) {
+            switch(event.code) {
+                case 'ArrowLeft':
+                    keys.left = true;
+                    event.preventDefault();
+                    break;
+                case 'ArrowRight':
+                    keys.right = true;
+                    event.preventDefault();
+                    break;
+            }
+        });
+        
+        document.addEventListener('keyup', function(event) {
+            switch(event.code) {
+                case 'ArrowLeft':
+                    keys.left = false;
+                    event.preventDefault();
+                    break;
+                case 'ArrowRight':
+                    keys.right = false;
+                    event.preventDefault();
+                    break;
+            }
+        });
+        
+        // Add click handler for projectile launching
+        canvas.addEventListener('click', function(event) {
+            if (!gameActive || projectile) return; // Don't launch if game over or projectile already active
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            
+            // Launch projectile from current player's gorilla head
+            let startX, startY;
+            if (currentPlayer === 'left' && leftGorilla) {
+                startX = leftGorilla.x;
+                startY = leftGorilla.y - 4; // Head position
+            } else if (currentPlayer === 'right' && rightGorilla) {
+                startX = rightGorilla.x;
+                startY = rightGorilla.y - 4; // Head position
+            } else {
+                return; // No gorilla to launch from
+            }
+            
+            projectile = createProjectile(startX, startY, clickX, clickY);
+        });
+        
+        // Add right-click handler to regenerate the background
+        canvas.addEventListener('contextmenu', function(event) {
+            event.preventDefault(); // Prevent context menu
+            
+            // Clear all chunks to regenerate city
+            worldChunks.clear();
+            cameraX = 0;
+            
+            // Generate new session offset for different building patterns
+            sessionRandomOffset = Math.floor(Math.random() * 10000);
+            
+            worldChunks.set(0, generateWorldChunk(0));
+            
+            // Reposition gorillas
+            findGorillaBuildings();
+            
+            // Clear sky cache to regenerate sunset and stars
+            cachedSunsetColor = null;
+            cachedStars = [];
+            
+            // Reset game state
+            currentPlayer = 'left';
+            gameActive = true;
+            projectile = null;
+            
+            // Clear explosion holes
+            explosionHoles = [];
+        });
         
         // Start the game
         init();
-        
-        // Add a click handler to regenerate the background
-        canvas.addEventListener('click', function() {
-            init();
-        });
-        
-        // Display instructions
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-        ctx.font = '16px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('Click canvas to regenerate sunset!', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 20);
     </script>
 </body>
 </html>
