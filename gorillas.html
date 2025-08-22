@@ -75,6 +75,13 @@
         let gameActive = true;
         let projectile = null;
         let flashTimer = 0;
+        let gameOver = false;
+        let winner = null;
+        let showVictoryNotification = false;
+        
+        // Score tracking
+        let leftScore = 0;
+        let rightScore = 0;
         
         // Generate a random vibrant sunset color
         function getRandomSunsetColor() {
@@ -596,6 +603,9 @@
         }
         
         function checkProjectileCollision() {
+            // Don't check collisions if game is over
+            if (gameOver) return;
+            
             // Only check gorilla collisions after projectile has traveled far enough to clear the launching gorilla
             const minSafeDistance = 25; // Projectile must travel 25px before it can hit gorillas
             
@@ -642,6 +652,9 @@
         
         function explode(x, y) {
             const blastRadius = 40;
+            
+            // Don't process explosion if game is already over
+            if (gameOver) return;
             
             // Check if either gorilla is in blast radius AND not already in an explosion hole
             if (leftGorilla) {
@@ -791,15 +804,119 @@
             projectile = null;
         }
         
-        function endGame(winner) {
+        function endGame(winningPlayer) {
             gameActive = false;
-            alert(`${winner.toUpperCase()} GORILLA WINS!`);
-            // Reset game
-            setTimeout(() => {
-                gameActive = true;
-                currentPlayer = 'left';
-                projectile = null;
-            }, 2000);
+            gameOver = true;
+            winner = winningPlayer;
+            showVictoryNotification = true;
+            projectile = null;
+            
+            // Update scores
+            if (winningPlayer === 'left') {
+                leftScore++;
+            } else {
+                rightScore++;
+            }
+        }
+        
+        function drawVictoryNotification() {
+            if (!showVictoryNotification) return;
+            
+            // Draw semi-transparent overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Victory notification box
+            const boxWidth = 400;
+            const boxHeight = 150;
+            const boxX = (CANVAS_WIDTH - boxWidth) / 2;
+            const boxY = (CANVAS_HEIGHT - boxHeight) / 2;
+            
+            // Draw notification box with border
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+            ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+            
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+            
+            // Set cartoonish font
+            ctx.font = 'bold 32px "Comic Sans MS", "Marker Felt", fantasy';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = winner === 'left' ? '#0066FF' : '#FFD700';
+            
+            // Draw victory text
+            const winnerText = `${winner.toUpperCase()} GORILLA WINS!`;
+            ctx.fillText(winnerText, CANVAS_WIDTH / 2, boxY + 50);
+            
+            // Draw instruction text
+            ctx.font = 'bold 18px "Comic Sans MS", "Marker Felt", fantasy';
+            ctx.fillStyle = '#666';
+            ctx.fillText('Click to start a new round!', CANVAS_WIDTH / 2, boxY + 90);
+            
+            // Draw confetti effect
+            drawConfetti();
+            
+            // Reset text alignment
+            ctx.textAlign = 'left';
+        }
+        
+        function drawConfetti() {
+            // Simple confetti animation
+            const time = Date.now() / 100;
+            for (let i = 0; i < 20; i++) {
+                const x = (Math.sin(time + i) * 100 + CANVAS_WIDTH / 2 + i * 20) % CANVAS_WIDTH;
+                const y = (time + i * 10) % CANVAS_HEIGHT;
+                
+                ctx.fillStyle = `hsl(${(time + i * 30) % 360}, 70%, 60%)`;
+                ctx.fillRect(x, y, 4, 4);
+            }
+        }
+        
+        function drawScores() {
+            ctx.font = 'bold 24px "Comic Sans MS", "Marker Felt", fantasy';
+            
+            // Left score (top-left corner)
+            ctx.fillStyle = '#0066FF';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Left: ${leftScore}`, 20, 40);
+            
+            // Right score (top-right corner)  
+            ctx.fillStyle = '#FFD700';
+            ctx.textAlign = 'right';
+            ctx.fillText(`Right: ${rightScore}`, CANVAS_WIDTH - 20, 40);
+            
+            // Reset text alignment
+            ctx.textAlign = 'left';
+        }
+        
+        function resetGame() {
+            // Clear all chunks to regenerate city
+            worldChunks.clear();
+            cameraX = 0;
+            
+            // Generate new session offset for different building patterns
+            sessionRandomOffset = Math.floor(Math.random() * 10000);
+            
+            worldChunks.set(0, generateWorldChunk(0));
+            
+            // Reposition gorillas
+            findGorillaBuildings();
+            
+            // Clear sky cache to regenerate sunset and stars
+            cachedSunsetColor = null;
+            cachedStars = [];
+            
+            // Clear explosion holes
+            explosionHoles = [];
+            
+            // Reset game state
+            currentPlayer = 'left';
+            gameActive = true;
+            gameOver = false;
+            winner = null;
+            showVictoryNotification = false;
+            projectile = null;
         }
         
         function drawProjectile() {
@@ -1162,6 +1279,12 @@
             
             // Draw projectile
             drawProjectile();
+            
+            // Draw scores
+            drawScores();
+            
+            // Draw victory notification (if active)
+            drawVictoryNotification();
         }
         
         // Draw a background building (now used for the background layer)
@@ -1986,9 +2109,16 @@
             }
         });
         
-        // Add click handler for projectile launching
+        // Add click handler for projectile launching and victory notification dismissal
         canvas.addEventListener('click', function(event) {
-            if (!gameActive || projectile) return; // Don't launch if game over or projectile already active
+            // If victory notification is showing, dismiss it and start new round
+            if (showVictoryNotification) {
+                resetGame();
+                return;
+            }
+            
+            // Don't launch if game over or projectile already active
+            if (!gameActive || projectile || gameOver) return;
             
             const rect = canvas.getBoundingClientRect();
             const clickX = event.clientX - rect.left;
@@ -2009,33 +2139,18 @@
             projectile = createProjectile(startX, startY, clickX, clickY);
         });
         
-        // Add right-click handler to regenerate the background
+        // Add right-click handler to regenerate the background (preserve scores)
         canvas.addEventListener('contextmenu', function(event) {
             event.preventDefault(); // Prevent context menu
             
-            // Clear all chunks to regenerate city
-            worldChunks.clear();
-            cameraX = 0;
+            const savedLeftScore = leftScore;
+            const savedRightScore = rightScore;
             
-            // Generate new session offset for different building patterns
-            sessionRandomOffset = Math.floor(Math.random() * 10000);
+            resetGame();
             
-            worldChunks.set(0, generateWorldChunk(0));
-            
-            // Reposition gorillas
-            findGorillaBuildings();
-            
-            // Clear sky cache to regenerate sunset and stars
-            cachedSunsetColor = null;
-            cachedStars = [];
-            
-            // Reset game state
-            currentPlayer = 'left';
-            gameActive = true;
-            projectile = null;
-            
-            // Clear explosion holes
-            explosionHoles = [];
+            // Restore scores
+            leftScore = savedLeftScore;
+            rightScore = savedRightScore;
         });
         
         // Start the game
