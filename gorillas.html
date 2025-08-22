@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Gorillas Game</title>
     <style>
         body {
@@ -10,32 +10,122 @@
             padding: 0;
             background: #000;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            font-family: Arial, sans-serif;
+            font-family: "Comic Sans MS", "Marker Felt", fantasy;
+            overflow: hidden;
         }
         
         canvas {
             border: 2px solid #333;
             background: #000;
+            max-width: 100vw;
+            max-height: 80vh;
+            touch-action: none; /* Prevent scrolling on touch */
         }
         
         .game-container {
             text-align: center;
+            width: 100%;
+            height: 100%;
+            position: relative;
         }
         
         h1 {
             color: #fff;
             margin-bottom: 20px;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            font-size: 24px;
+        }
+        
+        .mobile-controls {
+            display: none;
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            gap: 20px;
+            z-index: 1000;
+        }
+        
+        .mobile-button {
+            background: rgba(255, 255, 255, 0.9);
+            border: 3px solid #333;
+            border-radius: 10px;
+            padding: 15px 25px;
+            font-family: "Comic Sans MS", "Marker Felt", fantasy;
+            font-weight: bold;
+            font-size: 16px;
+            color: #333;
+            cursor: pointer;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        
+        .mobile-button:active {
+            background: rgba(200, 200, 200, 0.9);
+            transform: scale(0.95);
+        }
+        
+        .instructions {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.8);
+            z-index: 1000;
+            padding: 0 10px;
+        }
+        
+        /* Mobile-specific styles */
+        @media (max-width: 768px) {
+            .mobile-controls {
+                display: flex;
+            }
+            .instructions {
+                font-size: 12px;
+                top: 5px;
+            }
+            canvas {
+                max-height: 70vh;
+            }
+            h1 {
+                font-size: 20px;
+                margin-bottom: 10px;
+            }
+        }
+        
+        /* Very small screens */
+        @media (max-width: 480px) {
+            .mobile-button {
+                padding: 12px 20px;
+                font-size: 14px;
+            }
+            .instructions {
+                font-size: 11px;
+            }
+            h1 {
+                font-size: 18px;
+            }
         }
     </style>
 </head>
 <body>
+    <div class="instructions">
+        Tap to aim and fire! Right-tap to regenerate city.
+    </div>
+    
     <div class="game-container">
         <h1>Gorillas</h1>
         <canvas id="gameCanvas" width="800" height="600"></canvas>
+    </div>
+    
+    <div class="mobile-controls">
+        <button class="mobile-button" id="regenerateBtn">New City</button>
     </div>
 
     <script>
@@ -43,9 +133,40 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         
-        // Game dimensions
-        const CANVAS_WIDTH = canvas.width;
-        const CANVAS_HEIGHT = canvas.height;
+        // Game dimensions (declared first)
+        let CANVAS_WIDTH = 800;
+        let CANVAS_HEIGHT = 600;
+        
+        // Responsive canvas setup
+        function resizeCanvas() {
+            const containerWidth = window.innerWidth;
+            const containerHeight = window.innerHeight;
+            
+            // Calculate optimal canvas size
+            let canvasWidth = Math.min(800, containerWidth - 20);
+            let canvasHeight = Math.min(600, containerHeight * 0.7);
+            
+            // Maintain aspect ratio
+            const aspectRatio = 800 / 600;
+            if (canvasWidth / canvasHeight > aspectRatio) {
+                canvasWidth = canvasHeight * aspectRatio;
+            } else {
+                canvasHeight = canvasWidth / aspectRatio;
+            }
+            
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            canvas.style.width = canvasWidth + 'px';
+            canvas.style.height = canvasHeight + 'px';
+            
+            // Update global dimensions
+            CANVAS_WIDTH = canvasWidth;
+            CANVAS_HEIGHT = canvasHeight;
+        }
+        
+        // Initial resize and add listener
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
         
         // Camera/viewport system
         let cameraX = 0; // Current camera position
@@ -78,6 +199,7 @@
         let gameOver = false;
         let winner = null;
         let showVictoryNotification = false;
+        let victoryDanceTime = 0;
         
         // Score tracking
         let leftScore = 0;
@@ -500,23 +622,38 @@
                 console.log(`WARNING: Gorilla position corrected from x=${x} to x=${safeX} (canvas width=${CANVAS_WIDTH})`);
             }
             
-            // Check if this gorilla should flash (current player)
+            // Check if this gorilla is doing victory dance
+            const isWinner = gameOver && ((isLeft && winner === 'left') || (!isLeft && winner === 'right'));
+            
+            // Check if this gorilla should flash (current player) - but not during victory dance
             const isCurrentPlayer = (isLeft && currentPlayer === 'left') || (!isLeft && currentPlayer === 'right');
-            const shouldFlash = isCurrentPlayer && gameActive && !projectile;
+            const shouldFlash = isCurrentPlayer && gameActive && !projectile && !isWinner;
             const flashVisible = !shouldFlash || Math.floor(Date.now() / 300) % 2 === 0; // Flash every 300ms
             
-            if (!flashVisible) return; // Skip drawing if flashing off
+            if (!flashVisible && !isWinner) return; // Skip drawing if flashing off (unless it's the winner)
             
-            // Debug colors - bright blue for left, bright yellow for right
-            const bodyColor = isLeft ? 'rgb(0, 100, 255)' : 'rgb(255, 255, 0)'; // Blue or Yellow
-            const headColor = isLeft ? 'rgb(50, 150, 255)' : 'rgb(255, 255, 100)'; // Lighter versions
+            // Victory colors or debug colors
+            let bodyColor, headColor;
+            if (isWinner) {
+                // Victory colors - more vibrant and celebratory
+                bodyColor = isLeft ? 'rgb(0, 150, 255)' : 'rgb(255, 215, 0)'; // Brighter blue or gold
+                headColor = isLeft ? 'rgb(100, 200, 255)' : 'rgb(255, 255, 150)'; // Even lighter versions
+            } else {
+                // Regular debug colors
+                bodyColor = isLeft ? 'rgb(0, 100, 255)' : 'rgb(255, 255, 0)'; // Blue or Yellow
+                headColor = isLeft ? 'rgb(50, 150, 255)' : 'rgb(255, 255, 100)'; // Lighter versions
+            }
             
             const gorillaWidth = 16;
             const gorillaHeight = 20;
             const gorillaX = safeX - gorillaWidth / 2; // Use the safety-checked position
-            const gorillaY = y;
+            let gorillaY = y; // Use let instead of const so we can modify for victory dance
             
-
+            // Apply victory dance body bounce if this gorilla is the winner
+            if (isWinner) {
+                const bodyBounce = Math.sin(victoryDanceTime * 0.8) * 3; // Faster and more dramatic
+                gorillaY += bodyBounce;
+            }
             
             // Body
             ctx.fillStyle = bodyColor;
@@ -535,7 +672,17 @@
             
             // Arms
             ctx.fillStyle = bodyColor;
-            if (isLeft) {
+            
+            if (isWinner) {
+                // Victory dance - both arms move up and down frantically
+                const danceOffset = Math.sin(victoryDanceTime * 1.2) * 8; // Much faster and more exaggerated
+                const leftArmY = gorillaY + 6 + danceOffset;
+                const rightArmY = gorillaY + 6 - danceOffset; // Opposite phase for more dynamic look
+                
+                // Both arms raised and moving
+                ctx.fillRect(gorillaX - 8, leftArmY, 8, 4); // Left arm dancing
+                ctx.fillRect(gorillaX + gorillaWidth, rightArmY, 8, 4); // Right arm dancing
+            } else if (isLeft) {
                 // Left gorilla - right arm raised (for throwing)
                 ctx.fillRect(gorillaX + gorillaWidth, gorillaY + 4, 8, 4); // Right arm raised
                 ctx.fillRect(gorillaX - 6, gorillaY + 8, 6, 4); // Left arm down
@@ -553,7 +700,7 @@
             const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
             
             // Scale velocity based on distance (further = more force)
-            const maxVelocity = 50;
+            const maxVelocity = 60; // Increased by 20% (50 * 1.2 = 60)
             const velocityScale = Math.min(distance / 50, maxVelocity); // Much more powerful shots
             
             return {
@@ -814,6 +961,7 @@
             winner = winningPlayer;
             showVictoryNotification = true;
             projectile = null;
+            victoryDanceTime = 0; // Start victory dance animation
             
             // Update scores
             if (winningPlayer === 'left') {
@@ -895,6 +1043,9 @@
         }
         
         function resetGame() {
+            // Update canvas size for current viewport
+            resizeCanvas();
+            
             // Clear all chunks to regenerate city
             worldChunks.clear();
             cameraX = 0;
@@ -921,6 +1072,7 @@
             winner = null;
             showVictoryNotification = false;
             projectile = null;
+            victoryDanceTime = 0;
         }
         
         function drawBanana(x, y, rotation) {
@@ -1283,6 +1435,11 @@
             
             // Update projectile if active
             updateProjectile();
+            
+            // Update victory dance animation
+            if (gameOver && showVictoryNotification) {
+                victoryDanceTime += 0.25; // Much faster increment for frantic movement
+            }
             
             render();
             requestAnimationFrame(gameLoop);
@@ -2177,6 +2334,92 @@
         canvas.addEventListener('contextmenu', function(event) {
             event.preventDefault(); // Prevent context menu
             
+            const savedLeftScore = leftScore;
+            const savedRightScore = rightScore;
+            
+            resetGame();
+            
+            // Restore scores
+            leftScore = savedLeftScore;
+            rightScore = savedRightScore;
+        });
+        
+        // Touch event handlers for mobile
+        let touchStartTime = 0;
+        let touchTimeout = null;
+        
+        canvas.addEventListener('touchstart', function(event) {
+            event.preventDefault();
+            touchStartTime = Date.now();
+            
+            // Set timeout for long press (right-click equivalent)
+            touchTimeout = setTimeout(() => {
+                // Long press - regenerate city
+                const savedLeftScore = leftScore;
+                const savedRightScore = rightScore;
+                
+                resetGame();
+                
+                // Restore scores
+                leftScore = savedLeftScore;
+                rightScore = savedRightScore;
+                
+                // Visual feedback
+                canvas.style.filter = 'brightness(0.8)';
+                setTimeout(() => {
+                    canvas.style.filter = 'brightness(1)';
+                }, 100);
+            }, 500); // 500ms long press
+        });
+        
+        canvas.addEventListener('touchend', function(event) {
+            event.preventDefault();
+            const touchDuration = Date.now() - touchStartTime;
+            
+            // Clear long press timeout
+            if (touchTimeout) {
+                clearTimeout(touchTimeout);
+                touchTimeout = null;
+            }
+            
+            // Short tap - fire projectile
+            if (touchDuration < 500) {
+                const touch = event.changedTouches[0];
+                const rect = canvas.getBoundingClientRect();
+                const clickX = (touch.clientX - rect.left) * (CANVAS_WIDTH / rect.width);
+                const clickY = (touch.clientY - rect.top) * (CANVAS_HEIGHT / rect.height);
+                
+                // If victory notification is showing, dismiss it and start new round
+                if (showVictoryNotification) {
+                    resetGame();
+                    return;
+                }
+                
+                // Don't launch if game over or projectile already active
+                if (!gameActive || projectile || gameOver) return;
+                
+                // Launch projectile from current player's gorilla head
+                let startX, startY;
+                if (currentPlayer === 'left' && leftGorilla) {
+                    startX = leftGorilla.x;
+                    startY = leftGorilla.y - 4; // Head position
+                } else if (currentPlayer === 'right' && rightGorilla) {
+                    startX = rightGorilla.x;
+                    startY = rightGorilla.y - 4; // Head position
+                } else {
+                    return; // No gorilla to launch from
+                }
+                
+                projectile = createProjectile(startX, startY, clickX, clickY);
+            }
+        });
+        
+        canvas.addEventListener('touchmove', function(event) {
+            event.preventDefault(); // Prevent scrolling
+        });
+        
+        // Mobile button handler
+        document.getElementById('regenerateBtn').addEventListener('click', function() {
             const savedLeftScore = leftScore;
             const savedRightScore = rightScore;
             
