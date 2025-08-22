@@ -943,10 +943,11 @@
                 const buildingType = buildingRandom(2);
                 
                 if (buildingType < 0.25) {
-                    // Tapering building
+                    // Tapering building (mix of traditional and inverted)
                     const taperFactor = 0.3 + buildingRandom(3) * 0.4;
-                    drawTaperingBuildingWithFactor(x, buildingY, width, height, taperFactor);
-                    drawTaperingBuildingWindowsWithFactor(x, buildingY, width, height, windowLightChance, taperFactor, seed + 300);
+                    const isInverted = buildingRandom(31) < 0.3; // 30% chance of inverted
+                    drawTaperingBuildingWithFactor(x, buildingY, width, height, taperFactor, isInverted);
+                    drawTaperingBuildingWindowsWithFactor(x, buildingY, width, height, windowLightChance, taperFactor, seed + 300, isInverted);
                 } else if (buildingType < 0.4) {
                     // Pyramid building
                     drawPyramidBuildingWithSeed(x, buildingY, width, height, seed + 390);
@@ -1025,8 +1026,9 @@
                 if (buildingType < 0.25) {
                     // Tapering building
                     const taperFactor = 0.3 + buildingRandom(3) * 0.4;
-                    drawTaperingBuildingWithFactor(x, buildingY, width, height, taperFactor);
-                    drawTaperingBuildingWindowsWithFactor(x, buildingY, width, height, depthLayer, taperFactor, seed + 300);
+                    const isInverted = buildingRandom(31) < 0.3; // 30% chance of inverted
+                    drawTaperingBuildingWithFactor(x, buildingY, width, height, taperFactor, isInverted);
+                    drawTaperingBuildingWindowsWithFactor(x, buildingY, width, height, depthLayer, taperFactor, seed + 300, isInverted);
                 } else if (buildingType < 0.4) {
                     // Pyramid building with seeded parameters
                     drawPyramidBuildingWithSeed(x, buildingY, width, height, seed + 390);
@@ -1091,8 +1093,9 @@
                 if (buildingType < 0.5) {
                     // Tapering building
                     const taperFactor = 0.3 + buildingRandom(3) * 0.4;
-                    drawTaperingBuildingWithFactor(x, buildingY, width, height, taperFactor);
-                    drawBackgroundTaperingWindowsWithFactor(x, buildingY, width, height, taperFactor, seed + 700);
+                    const isInverted = buildingRandom(31) < 0.3; // 30% chance of inverted
+                    drawTaperingBuildingWithFactor(x, buildingY, width, height, taperFactor, isInverted);
+                    drawBackgroundTaperingWindowsWithFactor(x, buildingY, width, height, taperFactor, seed + 700, isInverted);
                 } else {
                     // Simple spire for background buildings
                     drawBuildingWithSpireSeeded(x, buildingY, width, height, seed + 790);
@@ -1200,8 +1203,9 @@
             if (buildingType < 0.25) {
                 // Tapering building - narrower at top
                 const taperFactor = 0.3 + seedRandom(randOffset++) * 0.4; // Store the taper factor
-                drawTaperingBuildingWithFactor(x, y, width, height, taperFactor);
-                drawTaperingBuildingWindowsWithFactor(x, y, width, height, depthLayer, taperFactor);
+                const isInverted = false; // Keep older building functions as traditional only
+                drawTaperingBuildingWithFactor(x, y, width, height, taperFactor, isInverted);
+                drawTaperingBuildingWindowsWithFactor(x, y, width, height, depthLayer, taperFactor, 3000, isInverted);
             } else if (buildingType < 0.4) {
                 // Transamerica Tower style - pyramid shape
                 drawPyramidBuilding(x, y, width, height);
@@ -1232,8 +1236,9 @@
             if (buildingType < 0.3) {
                 // Tapering building
                 const taperFactor = 0.3 + seedRandom(randOffset++) * 0.4; // Store the taper factor
-                drawTaperingBuildingWithFactor(x, y, width, height, taperFactor);
-                drawBackgroundTaperingWindowsWithFactor(x, y, width, height, taperFactor);
+                const isInverted = false; // Keep older building functions as traditional only
+                drawTaperingBuildingWithFactor(x, y, width, height, taperFactor, isInverted);
+                drawBackgroundTaperingWindowsWithFactor(x, y, width, height, taperFactor, 7000, isInverted);
             } else if (buildingType < 0.5) {
                 // Pyramid building for background
                 drawPyramidBuilding(x, y, width, height);
@@ -1251,15 +1256,25 @@
         }
         
         // Draw a building that tapers toward the top with specified factor
-        function drawTaperingBuildingWithFactor(x, y, width, height, taperFactor) {
+        function drawTaperingBuildingWithFactor(x, y, width, height, taperFactor, isInverted = false) {
             // Always draw tapering buildings as horizontal strips for consistency
             // This ensures the shape doesn't change when explosion holes are added
-            const topWidth = width * taperFactor;
             const stripHeight = 2; // Smaller strips for smoother appearance
             
+            let topWidth, bottomWidth;
+            if (isInverted) {
+                // Inverted: wider at top, narrower at bottom
+                topWidth = width;
+                bottomWidth = width * taperFactor;
+            } else {
+                // Traditional: narrower at top, wider at bottom  
+                topWidth = width * taperFactor;
+                bottomWidth = width;
+            }
+            
             for (let stripY = y; stripY < y + height; stripY += stripHeight) {
-                const progress = (stripY - y) / height;
-                const currentWidth = topWidth + (width - topWidth) * (1 - progress);
+                const progress = (stripY - y) / height; // 0 at top, 1 at bottom
+                const currentWidth = topWidth + (bottomWidth - topWidth) * progress;
                 const currentOffsetX = (width - currentWidth) / 2;
                 const actualStripHeight = Math.min(stripHeight, y + height - stripY);
                 
@@ -1705,7 +1720,7 @@
         }
         
         // Draw windows for tapering buildings using the exact taper factor
-        function drawTaperingBuildingWindowsWithFactor(x, y, width, height, depthLayer, taperFactor, seed = 3000) {
+        function drawTaperingBuildingWindowsWithFactor(x, y, width, height, depthLayer, taperFactor, seed = 3000, isInverted = false) {
             const seedRandom = (offset) => {
                 const val = Math.sin(seed + offset) * 10000;
                 return val - Math.floor(val);
@@ -1723,9 +1738,16 @@
                 const windowHeight = Math.floor(floorHeight * 0.4 + seedRandom(randOffset++) * floorHeight * 0.3);
                 const windowY = floorY + (floorHeight - windowHeight) / 2;
                 
-                // Calculate floor width based on taper - floor 0 is bottom (widest), higher floors are narrower
+                // Calculate floor width based on taper and inversion
                 const floorProgress = floor / numFloors; // 0 at bottom, 1 at top
-                const floorWidth = width * (1 - floorProgress * (1 - taperFactor));
+                let floorWidth;
+                if (isInverted) {
+                    // Inverted: narrower at bottom, wider at top
+                    floorWidth = width * (taperFactor + floorProgress * (1 - taperFactor));
+                } else {
+                    // Traditional: wider at bottom, narrower at top
+                    floorWidth = width * (1 - floorProgress * (1 - taperFactor));
+                }
                 const floorOffset = (width - floorWidth) / 2;
                 const floorX = x + floorOffset;
                 
@@ -1862,7 +1884,7 @@
         }
         
         // Draw windows for background tapering buildings using exact taper factor
-        function drawBackgroundTaperingWindowsWithFactor(x, y, width, height, taperFactor, seed = 7000) {
+        function drawBackgroundTaperingWindowsWithFactor(x, y, width, height, taperFactor, seed = 7000, isInverted = false) {
             const seedRandom = (offset) => {
                 const val = Math.sin(seed + offset) * 10000;
                 return val - Math.floor(val);
@@ -1877,9 +1899,16 @@
                 const windowHeight = Math.floor(floorHeight * 0.3 + seedRandom(randOffset++) * floorHeight * 0.2);
                 const windowY = floorY + (floorHeight - windowHeight) / 2;
                 
-                // Calculate floor width based on taper - EXACT same calculation as building
+                // Calculate floor width based on taper and inversion - EXACT same calculation as building
                 const floorProgress = floor / numFloors;
-                const floorWidth = width * (1 - floorProgress * (1 - taperFactor));
+                let floorWidth;
+                if (isInverted) {
+                    // Inverted: narrower at bottom, wider at top
+                    floorWidth = width * (taperFactor + floorProgress * (1 - taperFactor));
+                } else {
+                    // Traditional: wider at bottom, narrower at top
+                    floorWidth = width * (1 - floorProgress * (1 - taperFactor));
+                }
                 const floorOffset = (width - floorWidth) / 2;
                 const floorX = x + floorOffset;
                 
