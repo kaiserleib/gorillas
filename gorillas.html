@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gorillas Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        
+        canvas {
+            border: 2px solid #333;
+            background: #000;
+        }
+        
+        .game-container {
+            text-align: center;
+        }
+        
+        h1 {
+            color: #fff;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1>Gorillas</h1>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+    </div>
+
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game dimensions
+        const CANVAS_WIDTH = canvas.width;
+        const CANVAS_HEIGHT = canvas.height;
+        
+        // Generate a random vibrant sunset color
+        function getRandomSunsetColor() {
+            const sunsetColors = [
+                [255, 140, 0],   // Orange
+                [255, 20, 147],  // Deep Pink
+                [255, 69, 0],    // Red Orange
+                [255, 105, 180], // Hot Pink
+                [255, 0, 255],   // Magenta/Neon Purple
+                [0, 255, 0],     // Bright Green
+                [255, 0, 0],     // Full Red
+                [255, 215, 0],   // Gold
+                [138, 43, 226],  // Blue Violet
+                [255, 20, 147]   // Deep Pink
+            ];
+            
+            return sunsetColors[Math.floor(Math.random() * sunsetColors.length)];
+        }
+        
+        // Create sunset gradient background
+        function drawSunsetBackground() {
+            // Get random sunset color
+            const [r, g, b] = getRandomSunsetColor();
+            
+            // Create gradient from sunset color to dark blue/black
+            const gradient = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+            
+            // Start with dark blue/black at the top
+            gradient.addColorStop(0, 'rgb(10, 10, 30)');
+            
+            // Transition through darker versions
+            gradient.addColorStop(0.4, `rgb(${Math.floor(r * 0.3)}, ${Math.floor(g * 0.2)}, ${Math.floor(b * 0.1)})`);
+            gradient.addColorStop(0.7, `rgb(${Math.floor(r * 0.7)}, ${Math.floor(g * 0.5)}, ${Math.floor(b * 0.3)})`);
+            
+            // End with the vibrant sunset color at the bottom (horizon)
+            gradient.addColorStop(1, `rgb(${r}, ${g}, ${b})`);
+            
+            // Fill the entire canvas with the gradient
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        }
+        
+        // Add random stars to the sky
+        function drawStars() {
+            const numStars = 50 + Math.floor(Math.random() * 50); // 50-100 stars
+            
+            ctx.fillStyle = 'white';
+            
+            for (let i = 0; i < numStars; i++) {
+                // Stars appear more in the upper portion of the sky
+                const x = Math.random() * CANVAS_WIDTH;
+                const y = Math.random() * (CANVAS_HEIGHT * 0.6); // Top 60% of screen
+                
+                // Draw a single pixel star
+                ctx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
+                
+                // Occasionally add a slightly brighter star (2x2 pixels)
+                if (Math.random() < 0.1) {
+                    ctx.fillRect(Math.floor(x) + 1, Math.floor(y), 1, 1);
+                    ctx.fillRect(Math.floor(x), Math.floor(y) + 1, 1, 1);
+                }
+            }
+        }
+        
+        // Initialize the game
+        function init() {
+            // Clear canvas
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Draw the sunset background
+            drawSunsetBackground();
+            
+            // Add stars
+            drawStars();
+        }
+        
+        // Start the game
+        init();
+        
+        // Add a click handler to regenerate the background
+        canvas.addEventListener('click', function() {
+            init();
+        });
+        
+        // Display instructions
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Click canvas to regenerate sunset!', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 20);
+    </script>
+</body>
+</html>
