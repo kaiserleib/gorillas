@@ -975,6 +975,19 @@
             
             // Clear projectile
             projectile = null;
+            
+            // If a gorilla was hit, end the game immediately (but keep the animation running)
+            if (isGorillaHit) {
+                if (hitGorilla === 'left') {
+                    // Erase the left gorilla immediately
+                    leftGorilla = null;
+                    endGame('right'); // Right gorilla wins
+                } else {
+                    // Erase the right gorilla immediately
+                    rightGorilla = null;
+                    endGame('left'); // Left gorilla wins
+                }
+            }
         }
         
         function updateExplosionAnimation() {
@@ -988,21 +1001,12 @@
                 const explosion = activeExplosion;
                 activeExplosion = null;
                 
-                // Handle game ending if gorilla was hit
-                if (explosion.isGorillaHit) {
-                    if (explosion.hitGorilla === 'left') {
-                        // Erase the left gorilla
-                        leftGorilla = null;
-                        endGame('right'); // Right gorilla wins
-                    } else {
-                        // Erase the right gorilla
-                        rightGorilla = null;
-                        endGame('left'); // Left gorilla wins
-                    }
-                } else {
+                // Only handle terrain explosions here - gorilla hits are handled immediately
+                if (!explosion.isGorillaHit) {
                     // Normal terrain hit - switch turns
                     switchTurn();
                 }
+                // For gorilla hits, the game has already ended, just clear the animation
             }
         }
         
