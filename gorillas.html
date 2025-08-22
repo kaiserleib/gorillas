@@ -162,16 +162,48 @@
             // Update global dimensions
             CANVAS_WIDTH = canvasWidth;
             CANVAS_HEIGHT = canvasHeight;
+            
+            // Regenerate world to match new dimensions
+            regenerateWorldForNewSize();
         }
         
-        // Initial resize and add listener
-        resizeCanvas();
+        function regenerateWorldForNewSize() {
+            // Clear all chunks to regenerate city for new canvas size
+            worldChunks.clear();
+            cameraX = 0;
+            
+            // Update world chunk size to match new canvas width
+            WORLD_CHUNK_SIZE = CANVAS_WIDTH;
+            
+            // Generate new session offset for different building patterns
+            sessionRandomOffset = Math.floor(Math.random() * 10000);
+            
+            worldChunks.set(0, generateWorldChunk(0));
+            
+            // Reposition gorillas for new layout
+            findGorillaBuildings();
+            
+            // Clear sky cache to regenerate sunset and stars for new size
+            cachedSunsetColor = null;
+            cachedStars = [];
+            
+            // Clear explosion holes as they don't make sense with new layout
+            explosionHoles = [];
+            
+            // Reset projectile if one is active (it would be in wrong position)
+            if (projectile) {
+                projectile = null;
+                // Don't switch turns, just clear the projectile
+            }
+        }
+        
+        // Add resize listener (initial resize will be called after initialization)
         window.addEventListener('resize', resizeCanvas);
         
         // Camera/viewport system
         let cameraX = 0; // Current camera position
         const SCROLL_SPEED = 3; // Pixels per frame when scrolling
-        const WORLD_CHUNK_SIZE = CANVAS_WIDTH; // Make chunk cover full screen width
+        let WORLD_CHUNK_SIZE = CANVAS_WIDTH; // Make chunk cover full screen width (will be updated on resize)
         let worldChunks = new Map(); // Store generated building chunks
         
         // Input system
@@ -2263,11 +2295,18 @@
         
         // Initialize the game
         function init() {
-            // Generate initial chunk
-            worldChunks.set(0, generateWorldChunk(0));
+            // Set up canvas size first
+            resizeCanvas();
             
-            // Position gorillas
-            findGorillaBuildings();
+            // Generate initial chunk (this will be done by resizeCanvas, but keeping for safety)
+            if (!worldChunks.has(0)) {
+                worldChunks.set(0, generateWorldChunk(0));
+            }
+            
+            // Position gorillas (also done by resizeCanvas)
+            if (!leftGorilla || !rightGorilla) {
+                findGorillaBuildings();
+            }
             
             // Start the game loop
             gameLoop();
